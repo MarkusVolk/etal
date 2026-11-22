@@ -88,7 +88,11 @@ catalog_dep = declare_dependency(link_with: catalog_lib, include_directories: sr
 
 # What libflatpak knows about the installations.
 flatpak_lib = static_library('etal-flatpak',
-  files('src/flatpak/installations.cpp'),
+  files(
+    'src/flatpak/installations.cpp',
+    'src/flatpak/transactions.cpp',
+    'src/queue/transaction_queue.cpp',
+  ),
   include_directories: src_inc,
   dependencies: [catalog_dep, flatpak, gio],
 )

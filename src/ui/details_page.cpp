@@ -123,9 +123,11 @@ void etal::DetailsPage::build() {
   }));
 }
 
-void etal::DetailsPage::show(const AppEntry& entry, bool installed) {
+void etal::DetailsPage::show(const AppEntry& entry, ActionState state) {
   m_entry = entry;
-  m_installed = installed;
+  m_installed = state.installed;
+  m_state = std::move(state);
+  m_confirmRemove = false;
   m_shotIndex = 0;
   m_safety.reset();
   m_pendingIcon.reset();
@@ -204,8 +206,9 @@ void etal::DetailsPage::rebuildBody() {
           .height = kIconSize,
           .configure = [this](Image& image) { image.setAsyncReadyCallback([this] { m_callbacks.changed(); }); },
       }),
-      std::move(names)
+      std::move(names), ui::column({.out = &m_actions, .align = FlexAlign::End, .gap = Style::spaceXs})
   ));
+  rebuildActions();
 
   m_body->addChild(ui::row(
       {.out = &m_eolBanner,
@@ -379,6 +382,107 @@ void etal::DetailsPage::rebuildBody() {
       std::format("{} · {} · {}", entry.id, entry.remote, entry.installation == InstallationKind::User ? "user" : "system"),
       Style::fontSizeMini, ColorRole::OnSurfaceVariant
   ));
+}
+
+void etal::DetailsPage::setActionState(ActionState state) {
+  if (state == m_state) {
+    return;
+  }
+  const bool jobEnded = m_state.job && !m_state.job->finished() && state.job && state.job->finished();
+  m_state = std::move(state);
+  m_installed = m_state.installed;
+  if (jobEnded) {
+    m_confirmRemove = false;
+  }
+  m_installedChip->setVisible(m_installed);
+  rebuildActions();
+  m_callbacks.changed();
+}
+
+void etal::DetailsPage::rebuildActions() {
+  while (!m_actions->children().empty()) {
+    m_actions->removeChild(m_actions->children().back().get());
+  }
+  const std::optional<Job>& job = m_state.job;
+  auto row = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
+  if (job && !job->finished()) {
+    const std::uint64_t id = job->id;
+    auto progress = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceXs, .width = 220.0F});
+    progress->addChild(ui::progressBar({.progress = static_cast<float>(job->fraction), .height = 6.0F}));
+    progress->addChild(ui::label({
+        .text = job->status,
+        .fontSize = Style::fontSizeCaption,
+        .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+        .maxLines = 1,
+        .ellipsize = TextEllipsize::End,
+        .configure = [](Label& label) { label.setUseMarkup(false); },
+    }));
+    row->addChild(std::move(progress));
+    row->addChild(ui::button({
+        .text = "Cancel",
+        .variant = ButtonVariant::Ghost,
+        .onClick = [this, id] { m_callbacks.cancel(id); },
+    }));
+  } else if (m_confirmRemove) {
+    m_actions->addChild(text(std::format("Remove {}?", m_entry.name), Style::fontSizeBody, ColorRole::OnSurface));
+    row->addChild(ui::button({
+        .text = "Remove",
+        .variant = ButtonVariant::Destructive,
+        .onClick = [this] { m_callbacks.remove(false); },
+    }));
+    row->addChild(ui::button({
+        .text = "Remove and Delete Data",
+        .variant = ButtonVariant::Outline,
+        .tooltip = std::format("Also deletes ~/.var/app/{}", m_entry.id),
+        .onClick = [this] { m_callbacks.remove(true); },
+    }));
+    row->addChild(ui::button({
+        .text = "Keep",
+        .variant = ButtonVariant::Ghost,
+        .onClick = [this] {
+          m_confirmRemove = false;
+          rebuildActions();
+          m_callbacks.changed();
+        },
+    }));
+  } else if (m_installed) {
+    row->addChild(ui::button({
+        .text = "Open",
+        .glyph = "player-play",
+        .variant = ButtonVariant::Primary,
+        .onClick = [this] { m_callbacks.launch(); },
+    }));
+    row->addChild(ui::button({
+        .glyph = "trash",
+        .variant = ButtonVariant::Outline,
+        .tooltip = "Remove",
+        .onClick = [this] {
+          m_confirmRemove = true;
+          rebuildActions();
+          m_callbacks.changed();
+        },
+    }));
+  } else {
+    row->addChild(ui::button({
+        .text = "Install",
+        .glyph = "download",
+        .variant = ButtonVariant::Primary,
+        .tooltip = m_entry.installation == InstallationKind::User ? "For you only" : "For all users of this computer",
+        .onClick = [this] { m_callbacks.install(); },
+    }));
+  }
+  m_actions->addChild(std::move(row));
+  if (job && job->state == JobState::Failed) {
+    m_actions->addChild(ui::label({
+        .text = job->error,
+        .fontSize = Style::fontSizeCaption,
+        .color = colorSpecFromRole(ColorRole::Error),
+        .maxWidth = 320.0F,
+        .maxLines = 3,
+        .ellipsize = TextEllipsize::End,
+        .configure = [](Label& label) { label.setUseMarkup(false); },
+    }));
+  }
 }
 
 void etal::DetailsPage::setTile(Tile& tile, std::string glyph, std::string title, std::string detail, ColorRole tone) {

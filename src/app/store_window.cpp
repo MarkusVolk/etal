@@ -6,6 +6,7 @@
 #include "core/input/key_symbols.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
+#include "queue/transaction_queue.h"
 #include "render/render_context.h"
 #include "ui/app_tile.h"
 #include "ui/details_page.h"
@@ -96,10 +97,11 @@ etal::StoreWindow::StoreWindow(Services services)
     throw std::runtime_error("cannot create the window");
   }
   m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_services.textInput);
+  m_services.queue.setOnChanged([this](const Job& job, bool finished) { jobChanged(job, finished); });
   load();
 }
 
-etal::StoreWindow::~StoreWindow() = default;
+etal::StoreWindow::~StoreWindow() { m_services.queue.setOnChanged({}); }
 
 void etal::StoreWindow::requestUpdate() { m_surface.requestLayout(); }
 
@@ -236,6 +238,12 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     showDetails(*found.front());
   } else if (name == "back") {
     showBrowse();
+  } else if (name == "install" && m_detailsShown && m_detailsEntry && !isInstalled(*m_detailsEntry)) {
+    install(*m_detailsEntry);
+  } else if (name == "remove" && m_detailsShown && m_detailsEntry && isInstalled(*m_detailsEntry)) {
+    remove(*m_detailsEntry, parameter == "delete-data");
+  } else if (name == "cancel" && m_detailsJob) {
+    m_services.queue.cancel(*m_detailsJob);
   } else if (name == "scroll" && m_detailsShown) {
     m_details->scrollPage(parameter == "up" ? -1 : parameter == "top" ? 0 : 1);
   } else if (name == "screenshot" && m_detailsShown) {
@@ -254,7 +262,12 @@ void etal::StoreWindow::showDetails(const AppEntry& entry) {
   if (!m_details) {
     return;
   }
-  m_details->show(entry, isInstalled(entry));
+  m_detailsEntry = entry;
+  m_detailsJob.reset();
+  if (const Job* job = m_services.queue.pendingFor(entry.installation, entry.ref)) {
+    m_detailsJob = job->id;
+  }
+  m_details->show(entry, {.installed = isInstalled(entry), .job = m_detailsJob ? std::optional<Job>(*m_services.queue.pendingFor(entry.installation, entry.ref)) : std::nullopt});
   m_detailsName = entry.name;
   m_detailsShown = true;
   std::weak_ptr<int> alive = m_alive;
@@ -272,6 +285,79 @@ void etal::StoreWindow::showDetails(const AppEntry& entry) {
       }
   );
   requestUpdate();
+}
+
+// ── Transactions ─────────────────────────────────────────────────────────────
+
+void etal::StoreWindow::install(const AppEntry& entry) {
+  JobRequest request;
+  request.kind = JobKind::Install;
+  request.installation = entry.installation;
+  request.remote = entry.remote;
+  request.refs = {entry.ref};
+  request.appId = entry.id;
+  request.title = entry.name;
+  m_detailsJob = m_services.queue.enqueue(std::move(request));
+  syncDetailsState();
+}
+
+void etal::StoreWindow::remove(const AppEntry& entry, bool deleteData) {
+  JobRequest request;
+  request.kind = JobKind::Uninstall;
+  request.installation = entry.installation;
+  request.refs = {entry.ref};
+  request.appId = entry.id;
+  request.title = entry.name;
+  request.deleteData = deleteData;
+  m_detailsJob = m_services.queue.enqueue(std::move(request));
+  syncDetailsState();
+}
+
+void etal::StoreWindow::syncDetailsState() {
+  if (!m_details || !m_detailsEntry) {
+    return;
+  }
+  DetailsPage::ActionState state{.installed = isInstalled(*m_detailsEntry), .job = std::nullopt};
+  if (m_detailsJob) {
+    for (const Job& job : m_services.queue.jobs()) {
+      if (job.id == *m_detailsJob) {
+        state.job = job;
+      }
+    }
+  }
+  m_details->setActionState(std::move(state));
+}
+
+void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
+  if (finished) {
+    if (job.state == JobState::Failed) {
+      kLog.warn("{}: {}", job.request.title, job.error);
+    }
+    refreshInstalled();
+    if (job.request.kind == JobKind::AddRemote && job.state == JobState::Done) {
+      load();
+    }
+  }
+  syncDetailsState();
+  requestUpdate();
+}
+
+void etal::StoreWindow::refreshInstalled() {
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<std::vector<InstalledApp>>([] { return installedApps(); }, [this, alive](std::vector<InstalledApp> apps) {
+    if (alive.expired()) {
+      return;
+    }
+    m_installed.clear();
+    for (const auto& app : apps) {
+      m_installed.insert(installedKey(app.installation, app.id));
+    }
+    if (m_grid) {
+      m_grid->notifyDataChanged();
+    }
+    syncDetailsState();
+    requestUpdate();
+  });
 }
 
 void etal::StoreWindow::showBrowse() {
@@ -400,6 +486,33 @@ void etal::StoreWindow::build() {
                   g_clear_error(&error);
                 }
               },
+          .install =
+              [this] {
+                if (m_detailsEntry) {
+                  install(*m_detailsEntry);
+                }
+              },
+          .remove =
+              [this](bool deleteData) {
+                if (m_detailsEntry) {
+                  remove(*m_detailsEntry, deleteData);
+                }
+              },
+          .launch =
+              [this] {
+                if (!m_detailsEntry) {
+                  return;
+                }
+                runInThread<std::expected<void, std::string>>(
+                    [kind = m_detailsEntry->installation, ref = m_detailsEntry->ref] { return launchApp(kind, ref); },
+                    [](std::expected<void, std::string> result) {
+                      if (!result) {
+                        kLog.warn("cannot start the app: {}", result.error());
+                      }
+                    }
+                );
+              },
+          .cancel = [this](std::uint64_t job) { m_services.queue.cancel(job); },
       }
   );
   details->setFlexGrow(1.0F);

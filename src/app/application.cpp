@@ -21,6 +21,7 @@
 #include "net/image_cache.h"
 #include "platform/clipboard.h"
 #include "platform/desktop_integration.h"
+#include "queue/transaction_queue.h"
 #include "render/animation/animation_manager.h"
 #include "render/codecs/codecs.h"
 #include "render/core/async_texture_cache.h"
@@ -146,6 +147,7 @@ int etal::runApplication(const std::vector<std::string>& files) {
     HttpClient http;
     HttpClientPollSource httpSource(http);
     ImageCache images(http);
+    TransactionQueue queue;
 
     {
       StoreWindow window(
@@ -154,7 +156,8 @@ int etal::runApplication(const std::vector<std::string>& files) {
            .textInput = textInput,
            .animations = animations,
            .settings = settings,
-           .images = images}
+           .images = images,
+           .queue = queue}
       );
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
         if (!request.files.empty()) {

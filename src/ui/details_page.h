@@ -3,6 +3,7 @@
 #include "catalog/app_entry.h"
 #include "catalog/safety.h"
 #include "flatpak/installations.h"
+#include "queue/transaction_queue.h"
 #include "ui/controls/flex.h"
 #include "ui/controls/scroll_view.h"
 
@@ -32,12 +33,28 @@ namespace etal {
       // Something changed that needs a new frame (an image arrived).
       std::function<void()> changed;
       std::function<void(const std::string& url)> openUrl;
+      std::function<void()> install;
+      std::function<void(bool deleteData)> remove;
+      std::function<void()> launch;
+      std::function<void(std::uint64_t job)> cancel;
+    };
+
+    // Whether the app is installed, and the job that works on it right now or ended last.
+    struct ActionState {
+      bool installed = false;
+      std::optional<Job> job;
+      bool operator==(const ActionState& other) const {
+        return installed == other.installed && job.has_value() == other.job.has_value()
+            && (!job || (job->id == other.job->id && job->state == other.job->state && job->status == other.job->status
+                         && job->fraction == other.job->fraction));
+      }
     };
 
     DetailsPage(ImageCache& images, Callbacks callbacks);
     ~DetailsPage() override;
 
-    void show(const AppEntry& entry, bool installed);
+    void show(const AppEntry& entry, ActionState state);
+    void setActionState(ActionState state);
     // What the remote says about the ref; arrives after show().
     void setRefInfo(const std::string& ref, const std::expected<RefInfo, std::string>& info);
     // Applies images that arrived since the last frame; call while the window's renderer is current.
@@ -60,6 +77,7 @@ namespace etal {
     void showScreenshot();
     void setTile(Tile& tile, std::string glyph, std::string title, std::string detail, ColorRole tone);
     void requestImage(const std::string& url, bool screenshot);
+    void rebuildActions();
 
     ImageCache& m_images;
     Callbacks m_callbacks;
@@ -74,6 +92,7 @@ namespace etal {
     Glyph* m_verified = nullptr;
     Label* m_summary = nullptr;
     Flex* m_installedChip = nullptr;
+    Flex* m_actions = nullptr;
     Flex* m_eolBanner = nullptr;
     Label* m_eolText = nullptr;
     Flex* m_shots = nullptr;
@@ -89,6 +108,8 @@ namespace etal {
 
     AppEntry m_entry;
     bool m_installed = false;
+    ActionState m_state;
+    bool m_confirmRemove = false;
     std::size_t m_shotIndex = 0;
     // Files that arrived and wait for the next sync(), with the URL they belong to.
     std::optional<std::pair<std::string, std::filesystem::path>> m_pendingIcon;

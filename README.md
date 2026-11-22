@@ -1,7 +1,7 @@
 # Etal
 
 A store for Flatpak apps in the style of the Noctalia desktop: browse the catalogs of your remotes
-by category, search them, and (soon) install, update and remove apps. It reads the appstream data
+by category, search them, and install or remove apps one after the other while you go on browsing. It reads the appstream data
 flatpak keeps on disk, so browsing and searching work offline and start fast. It draws with
 Noctalia's UI library, without GTK or Qt, and follows the Noctalia colour scheme.
 
@@ -62,7 +62,8 @@ busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application Activate
 
 `search <text>`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
 (empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`, `details <app id>`,
-`back`, and on the details page `scroll <up|down|top>` and `screenshot <next|previous>`.
+`back`, and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
+`screenshot <next|previous>`.
 
 ## Colours
 

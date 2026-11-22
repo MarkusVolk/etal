@@ -32,6 +32,8 @@ namespace etal {
   class AppGridAdapter;
   class DetailsPage;
   class ImageCache;
+  class TransactionQueue;
+  struct Job;
 
   struct Services {
     WaylandConnection& connection;
@@ -40,6 +42,7 @@ namespace etal {
     AnimationManager& animations;
     SettingsStore& settings;
     ImageCache& images;
+    TransactionQueue& queue;
   };
 
   // The store window: categories and the search field on the left, the apps that match on the right.
@@ -76,6 +79,11 @@ namespace etal {
     void showDetails(const AppEntry& entry);
     void showBrowse();
     bool isInstalled(const AppEntry& entry) const;
+    void jobChanged(const Job& job, bool finished);
+    void syncDetailsState();
+    void refreshInstalled();
+    void install(const AppEntry& entry);
+    void remove(const AppEntry& entry, bool deleteData);
 
     Services m_services;
     WindowSurface m_surface;
@@ -110,6 +118,9 @@ namespace etal {
     bool m_sidebarStale = true;
     bool m_detailsShown = false;
     std::string m_detailsName;
+    std::optional<AppEntry> m_detailsEntry;
+    // The last job that touched the app on the details page, so a failure stays readable.
+    std::optional<std::uint64_t> m_detailsJob;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
   };
 } // namespace etal
