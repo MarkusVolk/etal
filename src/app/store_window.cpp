@@ -9,7 +9,10 @@
 #include "core/input/key_symbols.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
+#include "fs/xdg_dirs.h"
 #include "net/flathub_client.h"
+#include "net/http_client.h"
+#include "platform/file_portal.h"
 #include "queue/transaction_queue.h"
 #include "render/render_context.h"
 #include "ui/app_tile.h"
@@ -445,6 +448,11 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     showSettings();
   } else if (name == "background-check") {
     backgroundCheck();
+  } else if (name == "remove-unused") {
+    removeUnused();
+  } else if (name == "add-remote" && !parameter.empty()) {
+    showSettings();
+    addRemoteFromUrl(parameter);
   } else if (name == "remove-remote" && !parameter.empty()) {
     // Of the user installation; the system's goes through the Settings page.
     JobRequest request;
@@ -564,7 +572,53 @@ void etal::StoreWindow::remove(const AppEntry& entry, bool deleteData) {
   syncDetailsState();
 }
 
-void etal::StoreWindow::openFile(const std::filesystem::path& file) {
+void etal::StoreWindow::addRemoteFromUrl(const std::string& url) {
+  const auto fail = [this](std::string why) {
+    m_settingsPage->setAddStatus(std::move(why), true);
+    requestUpdate();
+  };
+  if (!url.starts_with("https://") && !url.starts_with("http://")) {
+    fail("The address starts with https://");
+    return;
+  }
+  // The remote is named after the file, as flatpak names it: letters, digits, - _ and . only.
+  std::string name = url.substr(url.find_last_of('/') + 1);
+  if (const auto end = name.find_first_of("?#"); end != std::string::npos) {
+    name.resize(end);
+  }
+  if (name.ends_with(".flatpakrepo")) {
+    name.resize(name.size() - 12);
+  }
+  std::erase_if(name, [](char c) { return !(g_ascii_isalnum(c) || c == '-' || c == '_' || c == '.'); });
+  if (name.empty() || name.front() == '.') {
+    fail("The address does not name a .flatpakrepo file");
+    return;
+  }
+  std::filesystem::path file;
+  try {
+    file = cacheHome() / "etal" / "remotes" / (name + ".flatpakrepo");
+  } catch (const std::exception& error) {
+    fail(error.what());
+    return;
+  }
+  std::error_code ignored;
+  std::filesystem::create_directories(file.parent_path(), ignored);
+  m_settingsPage->setAddStatus(std::format("Fetching {}…", name), false);
+  requestUpdate();
+  std::weak_ptr<int> alive = m_alive;
+  m_services.http.download(url, file, [this, alive, file, fail](bool ok) {
+    if (alive.expired()) {
+      return;
+    }
+    if (!ok) {
+      fail("The file could not be fetched");
+      return;
+    }
+    openFile(file, false);
+  });
+}
+
+void etal::StoreWindow::openFile(const std::filesystem::path& file, bool showActivity) {
   const std::string extension = file.extension().string();
   JobRequest request;
   request.installation = m_settings.installation;
@@ -580,7 +634,9 @@ void etal::StoreWindow::openFile(const std::filesystem::path& file) {
     return;
   }
   m_services.queue.enqueue(std::move(request));
-  showLibrary();
+  if (showActivity) {
+    showLibrary();
+  }
 }
 
 void etal::StoreWindow::updateAll() {
@@ -626,6 +682,11 @@ void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
     }
     refreshInstalled();
     const bool remote = job.request.kind == JobKind::AddRemote || job.request.kind == JobKind::RemoveRemote;
+    if (job.request.kind == JobKind::AddRemote && m_settingsPage) {
+      m_settingsPage->setAddStatus(
+          job.state == JobState::Done ? std::format("Added {}", job.request.remote) : job.error, job.state != JobState::Done
+      );
+    }
     if (remote && job.state == JobState::Done) {
       load();
     } else {
@@ -674,6 +735,29 @@ void etal::StoreWindow::showSettings() {
   m_sidebarStale = true;
   scanSettingsData();
   requestUpdate();
+}
+
+void etal::StoreWindow::removeUnused() {
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<std::vector<UnusedRef>>([] { return listUnusedRefs(); }, [this, alive](std::vector<UnusedRef> unused) {
+    if (alive.expired()) {
+      return;
+    }
+    for (const auto kind : {InstallationKind::User, InstallationKind::System}) {
+      JobRequest request;
+      request.kind = JobKind::Uninstall;
+      request.installation = kind;
+      for (const auto& ref : unused) {
+        if (ref.installation == kind) {
+          request.refs.push_back(ref.ref);
+        }
+      }
+      if (!request.refs.empty()) {
+        request.title = std::format("{} unused {}", request.refs.size(), request.refs.size() == 1 ? "runtime" : "runtimes");
+        m_services.queue.enqueue(std::move(request));
+      }
+    }
+  });
 }
 
 void etal::StoreWindow::scanSettingsData() {
@@ -1042,29 +1126,7 @@ void etal::StoreWindow::build() {
                 m_settings.onlyFree = free;
                 m_services.settings.save(m_settings);
               },
-          .removeUnused =
-              [this] {
-                std::weak_ptr<int> alive = m_alive;
-                runInThread<std::vector<UnusedRef>>([] { return listUnusedRefs(); }, [this, alive](std::vector<UnusedRef> unused) {
-                  if (alive.expired()) {
-                    return;
-                  }
-                  for (const auto kind : {InstallationKind::User, InstallationKind::System}) {
-                    JobRequest request;
-                    request.kind = JobKind::Uninstall;
-                    request.installation = kind;
-                    for (const auto& ref : unused) {
-                      if (ref.installation == kind) {
-                        request.refs.push_back(ref.ref);
-                      }
-                    }
-                    if (!request.refs.empty()) {
-                      request.title = std::format("{} unused {}", request.refs.size(), request.refs.size() == 1 ? "runtime" : "runtimes");
-                      m_services.queue.enqueue(std::move(request));
-                    }
-                  }
-                });
-              },
+          .removeUnused = [this] { removeUnused(); },
           .removeRemote =
               [this](const RemoteInfo& remote) {
                 JobRequest request;
@@ -1073,6 +1135,27 @@ void etal::StoreWindow::build() {
                 request.remote = remote.name;
                 request.title = std::format("remote {}", remote.name);
                 m_services.queue.enqueue(std::move(request));
+              },
+          .addRemote = [this](const std::string& url) { addRemoteFromUrl(url); },
+          .addRemoteFile =
+              [this] {
+                if (!m_services.portal.available()) {
+                  m_settingsPage->setAddStatus("No file dialog is available on this desktop", true);
+                  requestUpdate();
+                  return;
+                }
+                std::weak_ptr<int> alive = m_alive;
+                m_services.portal.openFiles(
+                    m_surface.portalHandle(), std::filesystem::path(g_get_home_dir()),
+                    [this, alive](std::vector<std::filesystem::path> files) {
+                      if (alive.expired()) {
+                        return;
+                      }
+                      for (const auto& file : files) {
+                        openFile(file, false);
+                      }
+                    }
+                );
               },
           .changed = [this] { requestUpdate(); },
       }

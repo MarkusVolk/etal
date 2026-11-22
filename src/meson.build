@@ -13,6 +13,7 @@ app_sources = files(
   'net/image_cache.cpp',
   'platform/clipboard.cpp',
   'platform/desktop_integration.cpp',
+  'platform/file_portal.cpp',
   'platform/launch_activation.cpp',
   'platform/notifier.cpp',
   'ui/app_tile.cpp',

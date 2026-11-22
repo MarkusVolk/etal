@@ -118,6 +118,57 @@ namespace {
     return added;
   }
 
+  // The refs of `kind` (should-delete or should-download) that flatpak relates to an installed ref.
+  std::set<std::string> relatedRefs(FlatpakInstallation* installation, FlatpakInstalledRef* ref, bool toDelete) {
+    std::set<std::string> out;
+    char* formatted = flatpak_ref_format_ref(FLATPAK_REF(ref));
+    GPtrArray* related = flatpak_installation_list_installed_related_refs_sync(
+        installation, flatpak_installed_ref_get_origin(ref), formatted, nullptr, nullptr
+    );
+    for (guint i = 0; related && i < related->len; ++i) {
+      auto* part = static_cast<FlatpakRelatedRef*>(g_ptr_array_index(related, i));
+      if (toDelete ? flatpak_related_ref_should_delete(part) : flatpak_related_ref_should_download(part)) {
+        char* name = flatpak_ref_format_ref(FLATPAK_REF(part));
+        out.insert(name);
+        g_free(name);
+      }
+    }
+    if (related) {
+      g_ptr_array_unref(related);
+    }
+    g_free(formatted);
+    return out;
+  }
+
+  // What goes with `refs` when they are uninstalled: their locales, debug files and extensions,
+  // but none that something staying installed would fetch again. Flatpak itself deletes an
+  // extension marked autodelete with the first runtime that goes, though another shares it: the
+  // extra codecs of the freedesktop runtime went with every GNOME or KDE runtime, and came back
+  // with the next update.
+  std::vector<std::string> partsToRemove(FlatpakInstallation* installation, const std::vector<std::string>& refs) {
+    const std::set<std::string> removing(refs.begin(), refs.end());
+    std::set<std::string> candidates, wanted;
+    GPtrArray* installed = flatpak_installation_list_installed_refs(installation, nullptr, nullptr);
+    for (guint i = 0; installed && i < installed->len; ++i) {
+      auto* ref = static_cast<FlatpakInstalledRef*>(g_ptr_array_index(installed, i));
+      char* formatted = flatpak_ref_format_ref(FLATPAK_REF(ref));
+      const bool goes = removing.contains(formatted);
+      g_free(formatted);
+      auto parts = relatedRefs(installation, ref, goes);
+      (goes ? candidates : wanted).merge(parts);
+    }
+    if (installed) {
+      g_ptr_array_unref(installed);
+    }
+    std::vector<std::string> out;
+    for (const auto& part : candidates) {
+      if (!wanted.contains(part) && !removing.contains(part)) {
+        out.push_back(part);
+      }
+    }
+    return out;
+  }
+
   std::expected<void, std::string> addOperations(FlatpakInstallation* installation, FlatpakTransaction* transaction, const etal::JobRequest& request) {
     GError* error = nullptr;
     bool ok = true;
@@ -128,8 +179,12 @@ namespace {
       }
       break;
     case etal::JobKind::Uninstall:
+      flatpak_transaction_set_disable_related(transaction, TRUE);
       for (const auto& ref : request.refs) {
         ok = ok && flatpak_transaction_add_uninstall(transaction, ref.c_str(), &error);
+      }
+      for (const auto& part : partsToRemove(installation, request.refs)) {
+        ok = ok && flatpak_transaction_add_uninstall(transaction, part.c_str(), &error);
       }
       break;
     case etal::JobKind::Update: {

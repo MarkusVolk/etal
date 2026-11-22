@@ -21,6 +21,7 @@
 class AnimationManager;
 class Button;
 class Flex;
+class HttpClient;
 class Image;
 class Input;
 class Label;
@@ -35,6 +36,7 @@ struct PointerEvent;
 namespace etal {
   class AppGridAdapter;
   class DetailsPage;
+  class FilePortal;
   class FlathubClient;
   class ImageCache;
   class LibraryPage;
@@ -53,6 +55,8 @@ namespace etal {
     TransactionQueue& queue;
     FlathubClient& flathub;
     Notifier& notifier;
+    HttpClient& http;
+    FilePortal& portal;
   };
 
   // The store window: categories and the search field on the left, the apps that match on the right.
@@ -68,7 +72,8 @@ namespace etal {
     // The same, once the catalogs are read: for the action a launch came with.
     void actionWhenLoaded(std::string name, std::string parameter);
     // Queues a .flatpakref or .flatpak bundle for installing, or adds the remote of a .flatpakrepo.
-    void openFile(const std::filesystem::path& file);
+    // showActivity: go to the Installed page, where the job shows.
+    void openFile(const std::filesystem::path& file, bool showActivity = true);
     bool running() const { return m_surface.isRunning(); }
     void close() { m_surface.close(); }
     wl_surface* surface() const { return m_surface.wlSurface(); }
@@ -107,7 +112,9 @@ namespace etal {
     void syncAddons();
     void scanLeftovers();
     void showSettings();
+    void addRemoteFromUrl(const std::string& url);
     void scanSettingsData();
+    void removeUnused();
     void backgroundCheck();
     void backgroundFollowUp();
 

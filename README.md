@@ -47,8 +47,8 @@ used again when the network is away. Nothing about you is sent.
 ## Files
 
 `etal file.flatpakref` and `etal app.flatpak` install what the file names, `etal name.flatpakrepo`
-adds the remote under the file's name. A running Etal takes the file over. Remotes are listed, and
-removed, on the Settings page.
+adds the remote under the file's name. A running Etal takes the file over. The Settings page lists
+the remotes, removes them and adds new ones, from the address of a .flatpakrepo file or from a file.
 
 ## Installations
 
@@ -86,7 +86,8 @@ busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application Activate
 `search <text>`, `discover [trending|popular|recently-added|recently-updated]`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
 (empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`, `details <app id>`,
 `back`, `installed`, `settings`, `check-updates`, `update-all`, `background-check`,
-`remove-remote <name>` (of the user installation), and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
+`add-remote <address of a .flatpakrepo file>`, `remove-remote <name>` (of the user installation),
+`remove-unused`, and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
 `screenshot <next|previous>`.
 
 ## Colours

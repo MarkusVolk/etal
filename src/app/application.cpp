@@ -22,6 +22,7 @@
 #include "net/image_cache.h"
 #include "platform/clipboard.h"
 #include "platform/desktop_integration.h"
+#include "platform/file_portal.h"
 #include "platform/notifier.h"
 #include "queue/transaction_queue.h"
 #include "render/animation/animation_manager.h"
@@ -154,6 +155,7 @@ int etal::runApplication(const Launch& launch) {
     ImageCache images(http);
     FlathubClient flathub(http);
     Notifier notifier;
+    FilePortal portal;
     TransactionQueue queue;
 
     {
@@ -166,7 +168,9 @@ int etal::runApplication(const Launch& launch) {
            .images = images,
            .queue = queue,
            .flathub = flathub,
-           .notifier = notifier}
+           .notifier = notifier,
+           .http = http,
+           .portal = portal}
       );
       for (const auto& path : paths) {
         window.openFile(path);

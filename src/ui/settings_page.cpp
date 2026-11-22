@@ -2,6 +2,7 @@
 
 #include "ui/builders.h"
 #include "ui/controls/button.h"
+#include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/segmented.h"
 #include "ui/controls/toggle.h"
@@ -114,6 +115,16 @@ void etal::SettingsPage::setUnused(std::vector<UnusedRef> unused) {
   m_stale = true;
 }
 
+void etal::SettingsPage::setAddStatus(std::string status, bool failed) {
+  m_addStatus = std::move(status);
+  m_addFailed = failed;
+  if (!failed && !m_addStatus.empty()) {
+    // On its way: the field is free for the next one.
+    m_addUrl.clear();
+  }
+  m_stale = true;
+}
+
 void etal::SettingsPage::sync() {
   if (m_stale) {
     rebuild();
@@ -183,9 +194,7 @@ void etal::SettingsPage::rebuild() {
 
   gap();
   m_body->addChild(heading("Remotes"));
-  m_body->addChild(plain(
-      "Where apps come from. Open a .flatpakrepo file with Etal to add one.", Style::fontSizeCaption, ColorRole::OnSurfaceVariant
-  ));
+  m_body->addChild(plain("Where apps come from.", Style::fontSizeCaption, ColorRole::OnSurfaceVariant));
   for (const RemoteInfo& remote : m_remotes) {
     const std::string key = std::format("{}:{}", remote.installation == InstallationKind::User ? 'u' : 's', remote.name);
     const bool confirm = m_confirmRemote == key;
@@ -212,6 +221,41 @@ void etal::SettingsPage::rebuild() {
   }
   if (m_remotes.empty()) {
     m_body->addChild(plain("No remotes yet.", Style::fontSizeBody, ColorRole::OnSurfaceVariant));
+  }
+  const auto add = [this] {
+    if (!m_addUrl.empty()) {
+      m_callbacks.addRemote(m_addUrl);
+    }
+  };
+  m_body->addChild(ui::row(
+      {.align = FlexAlign::Center,
+       .gap = Style::spaceSm,
+       .paddingV = Style::spaceSm,
+       .paddingH = Style::spaceMd,
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .styleRadius = Style::radiusLg},
+      ui::input({
+          .value = m_addUrl,
+          .placeholder = "Address of a .flatpakrepo file, https://…",
+          .flexGrow = 1.0F,
+          .onChange = [this](const std::string& text) { m_addUrl = text; },
+          .onSubmit = [add](const std::string&) { add(); },
+      }),
+      ui::button({
+          .text = "Add",
+          .glyph = "plus",
+          .variant = ButtonVariant::Primary,
+          .onClick = add,
+      }),
+      ui::button({
+          .text = "From File…",
+          .variant = ButtonVariant::Outline,
+          .tooltip = "A .flatpakrepo file on this computer",
+          .onClick = [this] { m_callbacks.addRemoteFile(); },
+      })
+  ));
+  if (!m_addStatus.empty()) {
+    m_body->addChild(plain(m_addStatus, Style::fontSizeCaption, m_addFailed ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   }
 
   gap();
