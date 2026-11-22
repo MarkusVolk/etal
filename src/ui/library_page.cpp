@@ -96,12 +96,13 @@ etal::LibraryPage::LibraryPage(Callbacks callbacks) : m_callbacks(std::move(call
   body->addChild(ui::column({.out = &m_jobsBox, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   body->addChild(ui::column({.out = &m_updatesBox, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   body->addChild(ui::column({.out = &m_installedBox, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
+  body->addChild(ui::column({.out = &m_leftoverBox, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   content->addChild(std::move(body));
 }
 
 void etal::LibraryPage::setCatalog(const Catalog* catalog) {
   m_catalog = catalog;
-  m_updatesStale = m_installedStale = true;
+  m_updatesStale = m_installedStale = m_leftoversStale = true;
 }
 
 void etal::LibraryPage::setInstalled(std::vector<InstalledApp> apps) {
@@ -360,7 +361,68 @@ void etal::LibraryPage::rebuildInstalled(Renderer& renderer) {
   }
 }
 
+void etal::LibraryPage::setLeftovers(std::vector<LeftoverData> leftovers) {
+  m_leftovers = std::move(leftovers);
+  m_confirmDelete.clear();
+  m_leftoversStale = true;
+}
+
+void etal::LibraryPage::rebuildLeftovers() {
+  clear(m_leftoverBox);
+  m_leftoverBox->setVisible(!m_leftovers.empty());
+  m_leftoverBox->setParticipatesInLayout(!m_leftovers.empty());
+  if (m_leftovers.empty()) {
+    return;
+  }
+  std::uint64_t total = 0;
+  for (const auto& leftover : m_leftovers) {
+    total += leftover.size;
+  }
+  m_leftoverBox->addChild(sectionHeader(std::format("Leftover Data ({})", formatSize(total))));
+  m_leftoverBox->addChild(plain(
+      "Settings and files of apps that are no longer installed, in ~/.var/app.", Style::fontSizeCaption,
+      ColorRole::OnSurfaceVariant, 2
+  ));
+  for (const LeftoverData& leftover : m_leftovers) {
+    const AppEntry* entry = entryOf(leftover.id, InstallationKind::User);
+    const bool confirm = m_confirmDelete == leftover.id;
+    auto names = ui::column({.align = FlexAlign::Stretch, .gap = 2.0F, .flexGrow = 1.0F});
+    names->addChild(plain(entry ? entry->name : leftover.id, Style::fontSizeBody, ColorRole::OnSurface));
+    names->addChild(plain(
+        entry ? std::format("{} · {}", formatSize(leftover.size), leftover.id) : formatSize(leftover.size), Style::fontSizeCaption,
+        ColorRole::OnSurfaceVariant
+    ));
+    m_leftoverBox->addChild(ui::row(
+        {.align = FlexAlign::Center,
+         .gap = Style::spaceMd,
+         .paddingV = Style::spaceSm,
+         .paddingH = Style::spaceMd,
+         .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
+         .styleRadius = Style::radiusLg},
+        ui::glyph({.glyph = "folder", .glyphSize = Style::fontSizeTitle, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}),
+        std::move(names),
+        ui::button({
+            .text = confirm ? "Delete for good" : "Delete",
+            .variant = confirm ? ButtonVariant::Destructive : ButtonVariant::Outline,
+            .onClick = [this, id = leftover.id, confirm] {
+              if (confirm) {
+                m_callbacks.deleteData(id);
+              } else {
+                m_confirmDelete = id;
+                m_leftoversStale = true;
+                m_callbacks.changed();
+              }
+            },
+        })
+    ));
+  }
+}
+
 void etal::LibraryPage::sync(Renderer& renderer) {
+  if (m_leftoversStale) {
+    rebuildLeftovers();
+    m_leftoversStale = false;
+  }
   if (m_jobsStale) {
     rebuildJobs();
     m_jobsStale = false;

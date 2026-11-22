@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <expected>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace etal {
@@ -32,6 +34,18 @@ namespace etal {
   std::expected<void, std::string> refreshAppstream(const CatalogSource& source);
 
   std::vector<InstalledApp> installedApps();
+  // Every installed ref, apps, runtimes and extensions, as installedRefKey().
+  std::unordered_set<std::string> installedRefKeys();
+  std::string installedRefKey(InstallationKind installation, std::string_view ref);
+
+  // A folder in ~/.var/app that no installed app owns any more.
+  struct LeftoverData {
+    std::string id;
+    std::uint64_t size = 0;
+  };
+  // Blocks while it adds up the sizes.
+  std::vector<LeftoverData> leftoverData(const std::vector<InstalledApp>& installed);
+  void deleteLeftoverData(const std::string& id);
 
   // What a remote says about one ref, for the details page: sizes, the metadata file with the
   // permissions, and an end-of-life notice. Uses the remote's cached summary, so it is quick

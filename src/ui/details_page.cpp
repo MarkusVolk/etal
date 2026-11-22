@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <format>
 #include <glib.h>
+#include <ranges>
 
 namespace {
   ImageSourceOptions sourceOptions(int targetSize) {
@@ -23,7 +24,7 @@ namespace {
 
   constexpr float kIconSize = 96.0F;
   constexpr float kShotHeight = 380.0F;
-  constexpr float kTileWidth = 200.0F;
+  constexpr std::size_t kAddonsShown = 5;
   constexpr float kMaxContentWidth = 980.0F;
 
   std::string formatSize(std::uint64_t bytes) {
@@ -128,6 +129,10 @@ void etal::DetailsPage::show(const AppEntry& entry, ActionState state) {
   m_installed = state.installed;
   m_state = std::move(state);
   m_confirmRemove = false;
+  m_addons.clear();
+  m_addonsExpanded = false;
+  m_related.clear();
+  m_addonsStale = m_relatedStale = false;
   m_shotIndex = 0;
   m_safety.reset();
   m_pendingIcon.reset();
@@ -275,8 +280,9 @@ void etal::DetailsPage::rebuildBody() {
   }
 
   // Context tiles.
-  auto tiles = ui::row({.align = FlexAlign::Stretch, .wrap = true, .gap = Style::spaceSm});
-  for (Tile* tile : {&m_safetyTile, &m_sizeTile, &m_ageTile, &m_licenseTile}) {
+  // The tiles share the width: a wrapping row does not add its second line to its height.
+  auto tiles = ui::row({.align = FlexAlign::Stretch, .gap = Style::spaceSm});
+  for (Tile* tile : {&m_safetyTile, &m_sizeTile, &m_ageTile, &m_licenseTile, &m_statsTile}) {
     tiles->addChild(ui::column(
         {.out = &tile->box,
          .align = FlexAlign::Center,
@@ -284,7 +290,7 @@ void etal::DetailsPage::rebuildBody() {
          .padding = Style::spaceMd,
          .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
          .styleRadius = Style::radiusLg,
-         .width = kTileWidth},
+         .flexGrow = 1.0F},
         ui::glyph({.out = &tile->glyph, .glyphSize = Style::fontSizeHeader * 1.4F}),
         ui::label({
             .out = &tile->title,
@@ -323,7 +329,14 @@ void etal::DetailsPage::rebuildBody() {
     setTile(m_licenseTile, "certificate", "Other license", entry.license, ColorRole::OnSurfaceVariant);
   }
 
+  // Shown once Flathub has answered.
+  m_statsTile.box->setVisible(false);
+  m_statsTile.box->setParticipatesInLayout(false);
+
   m_body->addChild(ui::column({.out = &m_permissions, .align = FlexAlign::Stretch, .gap = Style::spaceXs, .visible = false}));
+  m_body->addChild(ui::column({.out = &m_addonsBox, .align = FlexAlign::Stretch, .gap = Style::spaceXs, .visible = false}));
+  m_addonsBox->setParticipatesInLayout(false);
+  m_permissions->setParticipatesInLayout(false);
 
   // Version history.
   if (!entry.releases.empty()) {
@@ -354,6 +367,9 @@ void etal::DetailsPage::rebuildBody() {
     }
     m_body->addChild(std::move(history));
   }
+
+  m_body->addChild(ui::column({.out = &m_relatedBox, .align = FlexAlign::Stretch, .gap = Style::spaceSm, .visible = false}));
+  m_relatedBox->setParticipatesInLayout(false);
 
   // Links.
   auto links = ui::row({.align = FlexAlign::Center, .wrap = true, .gap = Style::spaceSm});
@@ -395,7 +411,7 @@ void etal::DetailsPage::setActionState(ActionState state) {
     m_confirmRemove = false;
   }
   m_installedChip->setVisible(m_installed);
-  rebuildActions();
+  m_actionsStale = true;
   m_callbacks.changed();
 }
 
@@ -441,7 +457,7 @@ void etal::DetailsPage::rebuildActions() {
         .variant = ButtonVariant::Ghost,
         .onClick = [this] {
           m_confirmRemove = false;
-          rebuildActions();
+          m_actionsStale = true;
           m_callbacks.changed();
         },
     }));
@@ -458,7 +474,7 @@ void etal::DetailsPage::rebuildActions() {
         .tooltip = "Remove",
         .onClick = [this] {
           m_confirmRemove = true;
-          rebuildActions();
+          m_actionsStale = true;
           m_callbacks.changed();
         },
     }));
@@ -583,6 +599,10 @@ void etal::DetailsPage::scrollPage(int pages) {
 }
 
 void etal::DetailsPage::sync(Renderer& renderer) {
+  if (m_actionsStale) {
+    rebuildActions();
+    m_actionsStale = false;
+  }
   if (m_pendingIcon) {
     m_icon->setSourceFile(renderer, m_pendingIcon->second.string(), sourceOptions(static_cast<int>(kIconSize)));
     m_pendingIcon.reset();
@@ -606,6 +626,118 @@ void etal::DetailsPage::sync(Renderer& renderer) {
       ));
     }
     m_permissions->setVisible(true);
+    m_permissions->setParticipatesInLayout(true);
     m_permissionsStale = false;
   }
+  if (m_addonsStale) {
+    while (!m_addonsBox->children().empty()) {
+      m_addonsBox->removeChild(m_addonsBox->children().back().get());
+    }
+    if (!m_addons.empty()) {
+      m_addonsBox->addChild(heading(std::format("Add-ons ({})", m_addons.size())));
+    }
+    const std::size_t shown = m_addonsExpanded ? m_addons.size() : std::min(m_addons.size(), kAddonsShown);
+    for (const AddonState& state : m_addons | std::views::take(shown)) {
+      auto names = ui::column({.align = FlexAlign::Stretch, .gap = 2.0F, .flexGrow = 1.0F});
+      names->addChild(text(state.addon.name, Style::fontSizeBody, ColorRole::OnSurface, false, 1));
+      if (!state.addon.summary.empty()) {
+        names->addChild(text(state.addon.summary, Style::fontSizeCaption, ColorRole::OnSurfaceVariant, false, 2));
+      }
+      m_addonsBox->addChild(ui::row(
+          {.align = FlexAlign::Center,
+           .gap = Style::spaceMd,
+           .paddingV = Style::spaceSm,
+           .paddingH = Style::spaceMd,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
+           .styleRadius = Style::radiusLg},
+          ui::glyph({.glyph = "puzzle", .glyphSize = Style::fontSizeTitle, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}),
+          std::move(names),
+          ui::button({
+              .text = state.busy ? "Working…" : state.installed ? "Remove" : "Install",
+              .enabled = !state.busy,
+              .variant = ButtonVariant::Outline,
+              .onClick = [this, addon = state.addon, install = !state.installed] { m_callbacks.addon(addon, install); },
+          })
+      ));
+    }
+    if (m_addons.size() > kAddonsShown) {
+      m_addonsBox->addChild(ui::row(
+          {.align = FlexAlign::Center},
+          ui::button({
+              .text = m_addonsExpanded ? std::string("Show fewer") : std::format("Show all {}", m_addons.size()),
+              .variant = ButtonVariant::Ghost,
+              .onClick = [this] {
+                m_addonsExpanded = !m_addonsExpanded;
+                m_addonsStale = true;
+                m_callbacks.changed();
+              },
+          })
+      ));
+    }
+    m_addonsBox->setVisible(!m_addons.empty());
+    m_addonsBox->setParticipatesInLayout(!m_addons.empty());
+    m_addonsStale = false;
+  }
+  if (m_relatedStale) {
+    while (!m_relatedBox->children().empty()) {
+      m_relatedBox->removeChild(m_relatedBox->children().back().get());
+    }
+    if (!m_related.empty()) {
+      m_relatedBox->addChild(heading(std::format("More by {}", m_entry.developer)));
+      auto row = ui::row({.align = FlexAlign::Center, .wrap = true, .gap = Style::spaceSm});
+      for (const AppEntry& app : m_related) {
+        row->addChild(ui::button({
+            .text = app.name,
+            .variant = ButtonVariant::Outline,
+            .tooltip = app.summary,
+            .onClick = [this, id = app.id] { m_callbacks.openApp(id); },
+        }));
+      }
+      m_relatedBox->addChild(std::move(row));
+    }
+    m_relatedBox->setVisible(!m_related.empty());
+    m_relatedBox->setParticipatesInLayout(!m_related.empty());
+    m_relatedStale = false;
+  }
+}
+
+void etal::DetailsPage::setStats(const std::string& id, std::optional<FlathubStats> stats) {
+  if (id != m_entry.id || !stats || stats->installsLastMonth == 0) {
+    return;
+  }
+  const auto compact = [](std::uint64_t value) {
+    if (value >= 1'000'000) {
+      return std::format("{:.1f} M", static_cast<double>(value) / 1e6);
+    }
+    if (value >= 10'000) {
+      return std::format("{} k", value / 1000);
+    }
+    return std::to_string(value);
+  };
+  setTile(
+      m_statsTile, "download", std::format("{} installs", compact(stats->installsLastMonth)),
+      std::format("In the last month, {} in all", compact(stats->installsTotal)), ColorRole::Primary
+  );
+  m_statsTile.box->setVisible(true);
+  m_statsTile.box->setParticipatesInLayout(true);
+  m_callbacks.changed();
+}
+
+void etal::DetailsPage::setAddons(std::vector<AddonState> addons) {
+  const bool same = addons.size() == m_addons.size()
+                 && std::ranges::equal(addons, m_addons, [](const AddonState& a, const AddonState& b) {
+                      return a.addon.ref == b.addon.ref && a.installed == b.installed && a.busy == b.busy;
+                    });
+  if (same) {
+    return;
+  }
+  m_addons = std::move(addons);
+  m_addonsStale = true;
+  m_callbacks.changed();
+}
+
+void etal::DetailsPage::setRelated(std::vector<AppEntry> apps) {
+  m_related = std::move(apps);
+  m_relatedStale = true;
+  m_callbacks.changed();
 }

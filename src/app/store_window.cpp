@@ -6,6 +6,7 @@
 #include "core/input/key_symbols.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
+#include "net/flathub_client.h"
 #include "queue/transaction_queue.h"
 #include "render/render_context.h"
 #include "ui/app_tile.h"
@@ -13,6 +14,8 @@
 #include "ui/library_page.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
+#include "ui/controls/image.h"
+#include "ui/controls/segmented.h"
 #include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/spinner.h"
@@ -33,10 +36,8 @@ namespace {
   constexpr float kHeaderHeight = 56.0F;
   constexpr float kTileMinWidth = 320.0F;
   constexpr float kTileHeight = 104.0F;
-
-  std::string installedKey(etal::InstallationKind kind, std::string_view id) {
-    return std::format("{}:{}", kind == etal::InstallationKind::User ? 'u' : 's', id);
-  }
+  constexpr float kBannerIcon = 72.0F;
+  constexpr std::array<const char*, 4> kCollections{"trending", "popular", "recently-added", "recently-updated"};
 } // namespace
 
 namespace etal {
@@ -56,7 +57,7 @@ namespace etal {
       }
       const AppEntry& entry = m_catalog.entries()[m_results[index]];
       static_cast<AppTile&>(tile).bind(
-          entry, m_installed.contains(installedKey(entry.installation, entry.id)), selected, hovered, *m_renderer
+          entry, m_installed.contains(installedRefKey(entry.installation, entry.ref)), selected, hovered, *m_renderer
       );
     }
     void onActivate(std::size_t index) override {
@@ -77,6 +78,7 @@ namespace etal {
 struct etal::StoreWindow::Loaded {
   std::expected<Catalog, std::string> catalog;
   std::vector<InstalledApp> installed;
+  std::unordered_set<std::string> refs;
   std::vector<std::string> problems;
 };
 
@@ -100,6 +102,7 @@ etal::StoreWindow::StoreWindow(Services services)
   m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_services.textInput);
   m_services.queue.setOnChanged([this](const Job& job, bool finished) { jobChanged(job, finished); });
   load();
+  loadDiscover();
 }
 
 etal::StoreWindow::~StoreWindow() { m_services.queue.setOnChanged({}); }
@@ -115,7 +118,7 @@ void etal::StoreWindow::load() {
   std::weak_ptr<int> alive = m_alive;
   runInThread<Loaded>(
       [] {
-        Loaded result{.catalog = std::unexpected(std::string()), .installed = {}, .problems = {}};
+        Loaded result{.catalog = std::unexpected(std::string()), .installed = {}, .refs = {}, .problems = {}};
         RemoteScan scan = scanRemotes();
         result.problems = std::move(scan.problems);
         // A remote added without its catalog: fetch it once, as `flatpak remote-add` leaves it out. Only
@@ -132,6 +135,7 @@ void etal::StoreWindow::load() {
         }
         result.catalog = Catalog::load(scan.sources);
         result.installed = installedApps();
+        result.refs = installedRefKeys();
         return result;
       },
       [this, alive](Loaded result) {
@@ -159,22 +163,56 @@ void etal::StoreWindow::loaded(Loaded result) {
   if (m_library) {
     m_library->setCatalog(&m_catalog);
   }
-  setInstalled(std::move(result.installed));
+  setInstalled(std::move(result.installed), std::move(result.refs));
+  m_bannerStale = true;
   kLog.info("{} apps, {} installed", m_catalog.entries().size(), m_installed.size());
   m_resultsStale = true;
   checkUpdates();
   requestUpdate();
 }
 
-void etal::StoreWindow::setInstalled(std::vector<InstalledApp> apps) {
+void etal::StoreWindow::setInstalled(std::vector<InstalledApp> apps, std::unordered_set<std::string> refs) {
   m_installedApps = std::move(apps);
-  m_installed.clear();
-  for (const auto& app : m_installedApps) {
-    m_installed.insert(installedKey(app.installation, app.id));
-  }
+  m_installed = std::move(refs);
   if (m_library) {
     m_library->setInstalled(m_installedApps);
   }
+  scanLeftovers();
+}
+
+void etal::StoreWindow::scanLeftovers() {
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<std::vector<LeftoverData>>([apps = m_installedApps] { return leftoverData(apps); }, [this, alive](std::vector<LeftoverData> found) {
+    if (alive.expired() || !m_library) {
+      return;
+    }
+    m_library->setLeftovers(std::move(found));
+    requestUpdate();
+  });
+}
+
+void etal::StoreWindow::loadDiscover() {
+  std::weak_ptr<int> alive = m_alive;
+  for (std::size_t i = 0; i < kCollections.size(); ++i) {
+    m_services.flathub.collection(kCollections[i], 48, [this, alive, i](std::vector<std::string> ids) {
+      if (alive.expired()) {
+        return;
+      }
+      m_collections[i] = std::move(ids);
+      if (m_discover && i == m_collection) {
+        m_resultsStale = true;
+        requestUpdate();
+      }
+    });
+  }
+  m_services.flathub.appOfTheDay([this, alive](std::string id) {
+    if (alive.expired()) {
+      return;
+    }
+    m_appOfTheDay = std::move(id);
+    m_bannerStale = true;
+    requestUpdate();
+  });
 }
 
 void etal::StoreWindow::checkUpdates() {
@@ -205,10 +243,22 @@ void etal::StoreWindow::checkUpdates() {
 }
 
 void etal::StoreWindow::rebuildResults() {
-  m_results = search(
-      m_catalog, m_query,
-      {.onlyVerified = m_settings.onlyVerified, .onlyFree = m_settings.onlyFree, .category = m_query.empty() ? m_category : std::string()}
-  );
+  if (m_discover && m_query.empty()) {
+    // Flathub's order, for the apps the catalog knows and the filters let through.
+    m_results.clear();
+    for (const auto& id : m_collections[m_collection]) {
+      const auto found = m_catalog.find(id);
+      if (found.empty() || (m_settings.onlyVerified && !found.front()->verified) || (m_settings.onlyFree && !found.front()->freeLicense)) {
+        continue;
+      }
+      m_results.push_back(static_cast<std::size_t>(found.front() - m_catalog.entries().data()));
+    }
+  } else {
+    m_results = search(
+        m_catalog, m_query,
+        {.onlyVerified = m_settings.onlyVerified, .onlyFree = m_settings.onlyFree, .category = m_query.empty() ? m_category : std::string()}
+    );
+  }
   if (m_grid) {
     m_grid->notifyDataChanged();
     m_grid->scrollToIndex(0, true);
@@ -218,8 +268,23 @@ void etal::StoreWindow::rebuildResults() {
 
 // ── Actions ──────────────────────────────────────────────────────────────────
 
+void etal::StoreWindow::showDiscover() {
+  m_discover = true;
+  m_page = Page::Browse;
+  if (!m_query.empty()) {
+    m_query.clear();
+    if (m_search) {
+      m_search->setValue("");
+    }
+  }
+  m_resultsStale = true;
+  m_sidebarStale = true;
+  requestUpdate();
+}
+
 void etal::StoreWindow::selectCategory(std::string category) {
   m_category = std::move(category);
+  m_discover = false;
   m_page = Page::Browse;
   if (!m_query.empty()) {
     m_query.clear();
@@ -260,6 +325,12 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     setQuery(parameter);
   } else if (name == "category") {
     selectCategory(parameter);
+  } else if (name == "discover") {
+    const auto wanted = std::ranges::find(kCollections, parameter, [](const char* value) { return std::string_view(value); });
+    if (wanted != kCollections.end()) {
+      m_collection = static_cast<std::size_t>(wanted - kCollections.begin());
+    }
+    showDiscover();
   } else if (name == "only-verified") {
     if (m_settings.onlyVerified != (parameter != "false")) {
       toggleFilter(true);
@@ -301,7 +372,7 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
 }
 
 bool etal::StoreWindow::isInstalled(const AppEntry& entry) const {
-  return m_installed.contains(installedKey(entry.installation, entry.id));
+  return m_installed.contains(installedRefKey(entry.installation, entry.ref));
 }
 
 void etal::StoreWindow::showDetails(const AppEntry& entry) {
@@ -333,7 +404,37 @@ void etal::StoreWindow::showDetails(const AppEntry& entry) {
         m_details->setRefInfo(ref, info);
       }
   );
+  m_details->setRelated([&] {
+    std::vector<AppEntry> related;
+    for (const AppEntry* other : m_catalog.byDeveloper(entry, 8)) {
+      related.push_back(*other);
+    }
+    return related;
+  }());
+  syncAddons();
+  if (entry.remote == "flathub") {
+    m_services.flathub.stats(entry.id, [this, alive, id = entry.id](std::optional<FlathubStats> stats) {
+      if (!alive.expired()) {
+        m_details->setStats(id, stats);
+      }
+    });
+  }
   requestUpdate();
+}
+
+void etal::StoreWindow::syncAddons() {
+  if (!m_details || !m_detailsEntry) {
+    return;
+  }
+  std::vector<DetailsPage::AddonState> addons;
+  for (const AppEntry* addon : m_catalog.addonsOf(*m_detailsEntry)) {
+    addons.push_back({
+        .addon = *addon,
+        .installed = isInstalled(*addon),
+        .busy = m_services.queue.pendingFor(addon->installation, addon->ref) != nullptr,
+    });
+  }
+  m_details->setAddons(std::move(addons));
 }
 
 // ── Transactions ─────────────────────────────────────────────────────────────
@@ -414,6 +515,7 @@ void etal::StoreWindow::syncDetailsState() {
     }
   }
   m_details->setActionState(std::move(state));
+  syncAddons();
 }
 
 void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
@@ -438,11 +540,12 @@ void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
 
 void etal::StoreWindow::refreshInstalled() {
   std::weak_ptr<int> alive = m_alive;
-  runInThread<std::vector<InstalledApp>>([] { return installedApps(); }, [this, alive](std::vector<InstalledApp> apps) {
+  using Scan = std::pair<std::vector<InstalledApp>, std::unordered_set<std::string>>;
+  runInThread<Scan>([] { return Scan{installedApps(), installedRefKeys()}; }, [this, alive](Scan scan) {
     if (alive.expired()) {
       return;
     }
-    setInstalled(std::move(apps));
+    setInstalled(std::move(scan.first), std::move(scan.second));
     if (m_grid) {
       m_grid->notifyDataChanged();
     }
@@ -508,6 +611,14 @@ void etal::StoreWindow::build() {
       .onClick = [this] { showLibrary(); },
   }));
   sidebar->addChild(ui::separator({.spacing = Style::spaceSm}));
+  sidebar->addChild(ui::button({
+      .out = &m_discoverButton,
+      .text = "Discover",
+      .glyph = "compass",
+      .contentAlign = ButtonContentAlign::Start,
+      .variant = ButtonVariant::Ghost,
+      .onClick = [this] { showDiscover(); },
+  }));
   sidebar->addChild(categoryButton("", "All Apps", "apps"));
   for (const auto& category : mainCategories()) {
     sidebar->addChild(categoryButton(std::string(category.id), category.title, category.glyph));
@@ -552,21 +663,101 @@ void etal::StoreWindow::build() {
       })
   ));
 
-  browse->addChild(ui::virtualGridView({
-      .out = &m_grid,
-      .state = &m_scrollState,
-      .minCellWidth = kTileMinWidth,
-      .cellHeight = kTileHeight,
-      .squareCells = false,
-      .columnGap = Style::spaceSm,
-      .rowGap = Style::spaceSm,
-      .adapter = m_adapter.get(),
-      .flexGrow = 1.0F,
-      .configure = [](VirtualGridView& view) {
-        view.setFillWidth(true);
-        view.setPadding(0.0F, Style::spaceLg, Style::spaceLg, Style::spaceLg);
-      },
+  auto bannerText = ui::column({.align = FlexAlign::Stretch, .gap = 2.0F, .flexGrow = 1.0F});
+  bannerText->addChild(ui::label({
+      .text = "APP OF THE DAY",
+      .fontSize = Style::fontSizeMini,
+      .fontWeight = FontWeight::Bold,
+      .color = colorSpecFromRole(ColorRole::Primary),
+      .configure = [](Label& label) { label.setUseMarkup(false); },
   }));
+  bannerText->addChild(ui::label({
+      .out = &m_bannerName,
+      .fontSize = Style::fontSizeHeader,
+      .fontWeight = FontWeight::Bold,
+      .color = colorSpecFromRole(ColorRole::OnSurface),
+      .maxLines = 1,
+      .ellipsize = TextEllipsize::End,
+      .configure = [](Label& label) { label.setUseMarkup(false); },
+  }));
+  bannerText->addChild(ui::label({
+      .out = &m_bannerSummary,
+      .fontSize = Style::fontSizeBody,
+      .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+      .maxLines = 1,
+      .ellipsize = TextEllipsize::End,
+      .configure = [](Label& label) { label.setUseMarkup(false); },
+  }));
+  auto discover = ui::column({
+      .out = &m_discoverBox,
+      .align = FlexAlign::Stretch,
+      .gap = Style::spaceMd,
+      .configure = [](Flex& box) { box.setPadding(0.0F, Style::spaceLg, Style::spaceMd, Style::spaceLg); },
+  });
+  discover->addChild(ui::row(
+      {.out = &m_banner,
+       .align = FlexAlign::Center,
+       .gap = Style::spaceLg,
+       .padding = Style::spaceLg,
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+       .styleRadius = Style::radiusXl},
+      ui::image({
+          .out = &m_bannerIcon,
+          .fit = ImageFit::Contain,
+          .width = kBannerIcon,
+          .height = kBannerIcon,
+          .configure = [this](Image& image) { image.setAsyncReadyCallback([this] { requestUpdate(); }); },
+      }),
+      std::move(bannerText),
+      ui::button({
+          .text = "View",
+          .variant = ButtonVariant::Primary,
+          .onClick = [this] {
+            if (const auto found = m_catalog.find(m_appOfTheDay); !found.empty()) {
+              showDetails(*found.front());
+            }
+          },
+      })
+  ));
+  discover->addChild(ui::row(
+      {.align = FlexAlign::Center},
+      ui::segmented({
+          .options = std::vector<ui::SegmentedOption>{
+              {.label = "Trending", .glyph = "trending-up", .tooltip = "Installed more often than usual these two weeks"},
+              {.label = "Popular", .glyph = "flame", .tooltip = "Installed most in the last month"},
+              {.label = "New", .glyph = "sparkles", .tooltip = "Added to Flathub lately"},
+              {.label = "Updated", .glyph = "refresh", .tooltip = "With a new version lately"},
+          },
+          .selectedIndex = m_collection,
+          .onChange = [this](std::size_t index) {
+            m_collection = std::min(index, m_collections.size() - 1);
+            m_resultsStale = true;
+            requestUpdate();
+          },
+      }),
+      ui::spacer()
+  ));
+  browse->addChild(std::move(discover));
+
+  // The margin is the box's: padding on the grid itself is not taken off its cells.
+  browse->addChild(ui::column(
+      {.out = &m_gridBox,
+       .align = FlexAlign::Stretch,
+       .flexGrow = 1.0F,
+       .configure = [](Flex& box) { box.setPadding(0.0F, Style::spaceLg, Style::spaceLg, Style::spaceLg); }},
+      ui::virtualGridView({
+          .out = &m_grid,
+          .state = &m_scrollState,
+          .minCellWidth = kTileMinWidth,
+          .cellHeight = kTileHeight,
+          .squareCells = false,
+          .columnGap = Style::spaceSm,
+          .rowGap = Style::spaceSm,
+          .adapter = m_adapter.get(),
+          .flexGrow = 1.0F,
+          .configure = [](VirtualGridView& view) { view.setFillWidth(true); },
+      })
+  ));
 
   browse->addChild(ui::column(
       {.out = &m_status, .align = FlexAlign::Center, .justify = FlexJustify::Center, .gap = Style::spaceMd, .flexGrow = 1.0F},
@@ -620,6 +811,30 @@ void etal::StoreWindow::build() {
                 );
               },
           .cancel = [this](std::uint64_t job) { m_services.queue.cancel(job); },
+          .addon =
+              [this](const AppEntry& addon, bool install) {
+                JobRequest request;
+                request.kind = install ? JobKind::Install : JobKind::Uninstall;
+                request.installation = addon.installation;
+                request.remote = addon.remote;
+                request.refs = {addon.ref};
+                request.appId = addon.id;
+                request.title = addon.name;
+                m_services.queue.enqueue(std::move(request));
+              },
+          .openApp =
+              [this](const std::string& id) {
+                // Not from inside the click: showing another app rebuilds the page the button is on.
+                std::weak_ptr<int> alive = m_alive;
+                runLater([this, alive, id] {
+                  if (alive.expired()) {
+                    return;
+                  }
+                  if (const auto found = m_catalog.find(id); !found.empty()) {
+                    showDetails(*found.front());
+                  }
+                });
+              },
       }
   );
   details->setFlexGrow(1.0F);
@@ -657,6 +872,21 @@ void etal::StoreWindow::build() {
             m_library->setJobs(m_services.queue.jobs());
             requestUpdate();
           },
+      .deleteData =
+          [this](const std::string& id) {
+            std::weak_ptr<int> alive = m_alive;
+            runInThread<bool>(
+                [id] {
+                  deleteLeftoverData(id);
+                  return true;
+                },
+                [this, alive](bool) {
+                  if (!alive.expired()) {
+                    scanLeftovers();
+                  }
+                }
+            );
+          },
       .changed = [this] { requestUpdate(); },
   });
   library->setFlexGrow(1.0F);
@@ -673,10 +903,13 @@ void etal::StoreWindow::build() {
 
 void etal::StoreWindow::syncSidebar() {
   for (auto& [id, button] : m_categoryButtons) {
-    const bool selected = m_page != Page::Library && m_query.empty() && id == m_category;
+    const bool selected = m_page != Page::Library && !m_discover && m_query.empty() && id == m_category;
     button->setVariant(selected ? ButtonVariant::Secondary : ButtonVariant::Ghost);
     button->setSelected(selected);
   }
+  const bool discover = m_page != Page::Library && m_discover && m_query.empty();
+  m_discoverButton->setVariant(discover ? ButtonVariant::Secondary : ButtonVariant::Ghost);
+  m_discoverButton->setSelected(discover);
   m_libraryButton->setVariant(m_page == Page::Library ? ButtonVariant::Secondary : ButtonVariant::Ghost);
   m_libraryButton->setSelected(m_page == Page::Library);
   const std::size_t waiting = m_updates.size() + m_services.queue.pendingCount();
@@ -703,9 +936,12 @@ void etal::StoreWindow::prepare() {
     rebuildResults();
   }
 
+  const bool discover = m_discover && m_query.empty();
   std::string title = "All Apps";
   if (!m_query.empty()) {
     title = "Search";
+  } else if (discover) {
+    title = "Discover";
   } else if (!m_category.empty()) {
     for (const auto& category : mainCategories()) {
       if (category.id == m_category) {
@@ -714,12 +950,35 @@ void etal::StoreWindow::prepare() {
     }
   }
   m_title->setText(title);
-  m_count->setText(m_loading ? std::string() : std::format("{} apps", m_results.size()));
+  m_count->setText(m_loading || discover ? std::string() : std::format("{} apps", m_results.size()));
+
+  // The app of the day, once Flathub named it and the catalog knows it.
+  const AppEntry* featured = nullptr;
+  if (const auto found = m_catalog.find(m_appOfTheDay); discover && !found.empty()) {
+    featured = found.front();
+  }
+  m_discoverBox->setVisible(discover && !m_loading);
+  m_discoverBox->setParticipatesInLayout(discover && !m_loading);
+  m_banner->setVisible(featured != nullptr);
+  m_banner->setParticipatesInLayout(featured != nullptr);
+  if (featured && m_bannerStale) {
+    m_bannerName->setText(featured->name);
+    m_bannerSummary->setText(featured->summary);
+    if (!featured->iconFile.empty()) {
+      ImageSourceOptions options;
+      options.targetSize = static_cast<int>(kBannerIcon);
+      options.mipmap = true;
+      m_bannerIcon->setSourceFile(renderer, featured->iconFile, options);
+    } else {
+      m_bannerIcon->clear(renderer);
+    }
+    m_bannerStale = false;
+  }
   m_surface.setTitle(std::format("{} — Etal", title));
 
   const bool showGrid = !m_loading && m_problem.empty() && !m_results.empty();
-  m_grid->setVisible(showGrid);
-  m_grid->setParticipatesInLayout(showGrid);
+  m_gridBox->setVisible(showGrid);
+  m_gridBox->setParticipatesInLayout(showGrid);
   m_status->setVisible(!showGrid);
   m_status->setParticipatesInLayout(!showGrid);
   m_spinner->setVisible(m_loading);
@@ -728,7 +987,12 @@ void etal::StoreWindow::prepare() {
     m_statusText->setText("Reading the catalogs…");
   } else {
     m_spinner->stop();
-    m_statusText->setText(!m_problem.empty() ? m_problem : !m_query.empty() ? "No app matches the search." : "No apps here.");
+    m_statusText->setText(
+        !m_problem.empty()  ? m_problem
+        : !m_query.empty()  ? "No app matches the search."
+        : discover          ? "Flathub's lists are not available right now.\nAll Apps and the categories work without them."
+                            : "No apps here."
+    );
   }
 
   m_browse->setVisible(m_page == Page::Browse);

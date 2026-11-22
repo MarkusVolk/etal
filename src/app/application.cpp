@@ -16,6 +16,7 @@
 #include "event_loop/deferred_call_poll_source.h"
 #include "event_loop/glib_poll_source.h"
 #include "event_loop/timer_poll_source.h"
+#include "net/flathub_client.h"
 #include "net/http_client.h"
 #include "net/http_client_poll_source.h"
 #include "net/image_cache.h"
@@ -147,6 +148,7 @@ int etal::runApplication(const std::vector<std::string>& files) {
     HttpClient http;
     HttpClientPollSource httpSource(http);
     ImageCache images(http);
+    FlathubClient flathub(http);
     TransactionQueue queue;
 
     {
@@ -157,7 +159,8 @@ int etal::runApplication(const std::vector<std::string>& files) {
            .animations = animations,
            .settings = settings,
            .images = images,
-           .queue = queue}
+           .queue = queue,
+           .flathub = flathub}
       );
       for (const auto& path : paths) {
         window.openFile(path);

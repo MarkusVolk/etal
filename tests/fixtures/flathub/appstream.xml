@@ -44,6 +44,20 @@
     <categories><category>Office</category></categories>
     <bundle type="flatpak">app/org.example.Notes/x86_64/stable</bundle>
   </component>
+  <component type="addon">
+    <id>org.example.Paint.Brushes</id>
+    <extends>org.example.Paint</extends>
+    <name>Extra Brushes</name>
+    <summary>More brushes for Paint</summary>
+    <bundle type="flatpak">runtime/org.example.Paint.Brushes/x86_64/stable</bundle>
+  </component>
+  <component type="desktop-application">
+    <id>org.example.Sketch</id>
+    <name>Sketch</name>
+    <summary>Quick drawings</summary>
+    <developer id="org.example"><name>Example Team</name></developer>
+    <bundle type="flatpak">app/org.example.Sketch/x86_64/stable</bundle>
+  </component>
   <component type="runtime">
     <id>org.example.Platform</id>
     <name>Example Platform</name>

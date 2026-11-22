@@ -1,6 +1,7 @@
 #include "flatpak/transactions.h"
 
 #include "catalog/safety.h"
+#include "flatpak/installations.h"
 
 #include <algorithm>
 #include <chrono>
@@ -206,14 +207,6 @@ namespace {
     return {};
   }
 
-  void deleteAppData(const std::string& id) {
-    if (id.empty() || id.find('/') != std::string::npos || id.starts_with('.')) {
-      return;
-    }
-    std::error_code error;
-    std::filesystem::remove_all(std::filesystem::path(g_get_home_dir()) / ".var" / "app" / id, error);
-  }
-
   std::set<std::string> permissionTitles(std::string_view metadata) {
     std::set<std::string> titles;
     for (const auto& permission : etal::assessPermissions(metadata).permissions) {
@@ -289,7 +282,7 @@ etal::runJob(const JobRequest& request, const ProgressFn& progress, GCancellable
     return std::unexpected(std::move(message));
   }
   if (request.kind == JobKind::Uninstall && request.deleteData) {
-    deleteAppData(request.appId);
+    deleteLeftoverData(request.appId);
   }
   progress({1.0, "Done"});
   return {};

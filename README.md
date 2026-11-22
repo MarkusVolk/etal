@@ -1,7 +1,8 @@
 # Etal
 
-A store for Flatpak apps in the style of the Noctalia desktop: browse the catalogs of your remotes
-by category, search them, and install or remove apps one after the other while you go on browsing. It reads the appstream data
+A store for Flatpak apps in the style of the Noctalia desktop: see what trends on Flathub, browse
+the catalogs of your remotes by category, search them, and install, update or remove apps one after
+the other while you go on browsing. It reads the appstream data
 flatpak keeps on disk, so browsing and searching work offline and start fast. It draws with
 Noctalia's UI library, without GTK or Qt, and follows the Noctalia colour scheme.
 
@@ -27,6 +28,12 @@ libcurl, and for the images librsvg, libwebp and libjxl.
 | Ctrl+F | Search |
 | Escape, Alt+Left | Back from an app's page |
 | Ctrl+Q, Ctrl+W | Quit |
+
+## The web
+
+The catalog comes from disk. From the web come the screenshots, and from Flathub's API the app of
+the day, the Discover lists and the install counts; their answers are cached in `~/.cache/etal` and
+used again when the network is away. Nothing about you is sent.
 
 ## Files
 
@@ -65,7 +72,7 @@ busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application Activate
   'sava{sv}' search 1 s 'paint' 0
 ```
 
-`search <text>`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
+`search <text>`, `discover [trending|popular|recently-added|recently-updated]`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
 (empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`, `details <app id>`,
 `back`, and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
 `screenshot <next|previous>`.

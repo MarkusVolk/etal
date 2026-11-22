@@ -18,7 +18,7 @@ int main() {
   std::filesystem::remove_all(cache);
   CHECK(catalog.has_value());
   // Runtimes and components without a flatpak bundle are left out.
-  CHECK(catalog->entries().size() == 2);
+  CHECK(catalog->entries().size() == 3);
 
   const auto paint = catalog->find("org.example.Paint");
   CHECK(paint.size() == 1);
@@ -45,6 +45,18 @@ int main() {
   CHECK(app.releases[0].notes == "New brushes.");
   CHECK(app.hasContentRating);
   CHECK(app.minimumAge > 0);
+
+  // Add-ons hang on the app they extend, not in the list of apps.
+  const auto addons = catalog->addonsOf(app);
+  CHECK(addons.size() == 1);
+  CHECK(addons[0]->name == "Extra Brushes");
+  CHECK(addons[0]->ref == "runtime/org.example.Paint.Brushes/x86_64/stable");
+  CHECK(catalog->find("org.example.Paint.Brushes").empty());
+  // The developer's other apps, without the app itself.
+  const auto related = catalog->byDeveloper(app, 8);
+  CHECK(related.size() == 1);
+  CHECK(related[0]->id == "org.example.Sketch");
+  CHECK(catalog->byDeveloper(*catalog->find("org.example.Notes").front(), 8).empty());
 
   const etal::AppEntry& notes = *catalog->find("org.example.Notes").front();
   CHECK(!notes.verified);

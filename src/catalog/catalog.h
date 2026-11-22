@@ -23,7 +23,7 @@ namespace etal {
   class Catalog {
   public:
     Catalog() = default;
-    explicit Catalog(std::vector<AppEntry> entries);
+    explicit Catalog(std::vector<AppEntry> entries, std::vector<AppEntry> addons = {});
 
     // Reads the sources with libappstream. Blocks for a while on the first run, when there is no
     // cache yet: call it off the main thread.
@@ -33,9 +33,15 @@ namespace etal {
     bool empty() const noexcept { return m_entries.empty(); }
     // The entries of this app id, user installation first.
     std::vector<const AppEntry*> find(std::string_view id) const;
+    // The add-ons the same remote of the same installation offers for this app, by name.
+    std::vector<const AppEntry*> addonsOf(const AppEntry& app) const;
+    // Other apps of the app's developer, one entry per app, by name; at most `limit`.
+    std::vector<const AppEntry*> byDeveloper(const AppEntry& app, std::size_t limit) const;
 
   private:
     std::vector<AppEntry> m_entries;
+    std::vector<AppEntry> m_addons;
+    std::unordered_multimap<std::string, std::size_t> m_addonsByApp;
     std::unordered_multimap<std::string, std::size_t> m_byId;
   };
 } // namespace etal

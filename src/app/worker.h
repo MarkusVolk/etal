@@ -29,4 +29,17 @@ namespace etal {
       );
     }).detach();
   }
+
+  // Runs `call` on the main thread once the current event is done with. For a handler that would
+  // otherwise destroy the control whose click it is handling.
+  inline void runLater(std::function<void()> call) {
+    g_idle_add_full(
+        G_PRIORITY_DEFAULT,
+        [](gpointer data) -> gboolean {
+          (*static_cast<std::function<void()>*>(data))();
+          return G_SOURCE_REMOVE;
+        },
+        new std::function<void()>(std::move(call)), [](gpointer data) { delete static_cast<std::function<void()>*>(data); }
+    );
+  }
 } // namespace etal

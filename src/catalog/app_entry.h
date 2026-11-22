@@ -60,5 +60,7 @@ namespace etal {
     // From the OARS content rating; 0 when it has none or nothing in it needs an age.
     unsigned minimumAge = 0;
     bool hasContentRating = false;
+    // For an add-on: the ids of the apps it extends. Empty for an app.
+    std::vector<std::string> extends;
   };
 } // namespace etal

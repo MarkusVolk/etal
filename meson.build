@@ -43,6 +43,7 @@ tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 appstream = dependency('appstream', version: '>=1.0')
 flatpak = dependency('flatpak', version: '>=1.14')
 curl = dependency('libcurl')
+nlohmann_json = dependency('nlohmann_json')
 
 if cpp.get_define('_LIBCPP_VERSION', prefix: '#include <version>') != ''
   add_project_arguments('-fexperimental-library', language: 'cpp')
@@ -80,9 +81,10 @@ catalog_lib = static_library('etal-catalog',
     'src/catalog/safety.cpp',
     'src/catalog/search.cpp',
     'src/fs/xdg_dirs.cpp',
+    'src/net/flathub_parse.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [glib, appstream, tomlplusplus],
+  dependencies: [glib, appstream, tomlplusplus, nlohmann_json],
 )
 catalog_dep = declare_dependency(link_with: catalog_lib, include_directories: src_inc, dependencies: [glib, appstream, tomlplusplus])
 

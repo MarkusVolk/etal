@@ -3,6 +3,7 @@
 #include "catalog/app_entry.h"
 #include "catalog/safety.h"
 #include "flatpak/installations.h"
+#include "net/flathub_parse.h"
 #include "queue/transaction_queue.h"
 #include "ui/controls/flex.h"
 #include "ui/controls/scroll_view.h"
@@ -37,6 +38,15 @@ namespace etal {
       std::function<void(bool deleteData)> remove;
       std::function<void()> launch;
       std::function<void(std::uint64_t job)> cancel;
+      std::function<void(const AppEntry& addon, bool install)> addon;
+      std::function<void(const std::string& id)> openApp;
+    };
+
+    struct AddonState {
+      AppEntry addon;
+      bool installed = false;
+      // A job installs or removes it right now.
+      bool busy = false;
     };
 
     // Whether the app is installed, and the job that works on it right now or ended last.
@@ -57,6 +67,11 @@ namespace etal {
     void setActionState(ActionState state);
     // What the remote says about the ref; arrives after show().
     void setRefInfo(const std::string& ref, const std::expected<RefInfo, std::string>& info);
+    // How often Flathub counted the app installed; arrives after show(), or never.
+    void setStats(const std::string& id, std::optional<FlathubStats> stats);
+    void setAddons(std::vector<AddonState> addons);
+    // Other apps of the same developer.
+    void setRelated(std::vector<AppEntry> apps);
     // Applies images that arrived since the last frame; call while the window's renderer is current.
     void sync(Renderer& renderer);
     const std::string& ref() const noexcept { return m_entry.ref; }
@@ -104,12 +119,22 @@ namespace etal {
     Tile m_sizeTile;
     Tile m_ageTile;
     Tile m_licenseTile;
+    Tile m_statsTile;
+    Flex* m_addonsBox = nullptr;
+    Flex* m_relatedBox = nullptr;
+    std::vector<AddonState> m_addons;
+    std::vector<AppEntry> m_related;
+    bool m_addonsStale = false;
+    bool m_addonsExpanded = false;
+    bool m_relatedStale = false;
     Flex* m_permissions = nullptr;
 
     AppEntry m_entry;
     bool m_installed = false;
     ActionState m_state;
     bool m_confirmRemove = false;
+    // The buttons are rebuilt in sync(), never from one of their own click handlers.
+    bool m_actionsStale = false;
     std::size_t m_shotIndex = 0;
     // Files that arrived and wait for the next sync(), with the URL they belong to.
     std::optional<std::pair<std::string, std::filesystem::path>> m_pendingIcon;

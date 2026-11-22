@@ -128,7 +128,7 @@ namespace {
 
   std::optional<etal::AppEntry> entryOf(AsComponent* component, const etal::CatalogSource& source) {
     const auto kind = as_component_get_kind(component);
-    if (kind != AS_COMPONENT_KIND_DESKTOP_APP && kind != AS_COMPONENT_KIND_CONSOLE_APP) {
+    if (kind != AS_COMPONENT_KIND_DESKTOP_APP && kind != AS_COMPONENT_KIND_CONSOLE_APP && kind != AS_COMPONENT_KIND_ADDON) {
       return std::nullopt;
     }
     AsBundle* bundle = as_component_get_bundle(component, AS_BUNDLE_KIND_FLATPAK);
@@ -152,6 +152,12 @@ namespace {
     entry.license = str(as_component_get_project_license(component));
     entry.freeLicense = !entry.license.empty() && as_license_is_free_license(entry.license.c_str());
     entry.verified = str(as_component_get_custom_value(component, "flathub::verification::verified")) == "true";
+    if (kind == AS_COMPONENT_KIND_ADDON) {
+      entry.extends = strings(as_component_get_extends(component));
+      if (entry.extends.empty()) {
+        return std::nullopt;
+      }
+    }
     entry.categories = strings(as_component_get_categories(component));
     entry.keywords = strings(as_component_get_keywords(component));
     icons(component, entry);
@@ -170,10 +176,53 @@ namespace {
   }
 } // namespace
 
-etal::Catalog::Catalog(std::vector<AppEntry> entries) : m_entries(std::move(entries)) {
+etal::Catalog::Catalog(std::vector<AppEntry> entries, std::vector<AppEntry> addons)
+    : m_entries(std::move(entries)), m_addons(std::move(addons)) {
   for (std::size_t i = 0; i < m_entries.size(); ++i) {
     m_byId.emplace(m_entries[i].id, i);
   }
+  for (std::size_t i = 0; i < m_addons.size(); ++i) {
+    for (const auto& app : m_addons[i].extends) {
+      m_addonsByApp.emplace(app, i);
+    }
+  }
+}
+
+std::vector<const etal::AppEntry*> etal::Catalog::addonsOf(const AppEntry& app) const {
+  std::vector<const AppEntry*> out;
+  const auto [first, last] = m_addonsByApp.equal_range(app.id);
+  for (auto it = first; it != last; ++it) {
+    const AppEntry& addon = m_addons[it->second];
+    if (addon.remote == app.remote && addon.installation == app.installation) {
+      out.push_back(&addon);
+    }
+  }
+  std::ranges::sort(out, {}, &AppEntry::name);
+  return out;
+}
+
+std::vector<const etal::AppEntry*> etal::Catalog::byDeveloper(const AppEntry& app, std::size_t limit) const {
+  std::vector<const AppEntry*> out;
+  if (app.developer.empty()) {
+    return out;
+  }
+  for (const AppEntry& entry : m_entries) {
+    if (entry.developer != app.developer || entry.id == app.id) {
+      continue;
+    }
+    // One per app: the entry of the installation the shown app is in, else the first read.
+    const auto same = std::ranges::find(out, entry.id, &AppEntry::id);
+    if (same == out.end()) {
+      out.push_back(&entry);
+    } else if (entry.installation == app.installation) {
+      *same = &entry;
+    }
+  }
+  std::ranges::sort(out, {}, &AppEntry::name);
+  if (out.size() > limit) {
+    out.resize(limit);
+  }
+  return out;
 }
 
 std::vector<const etal::AppEntry*> etal::Catalog::find(std::string_view id) const {
@@ -187,7 +236,7 @@ std::vector<const etal::AppEntry*> etal::Catalog::find(std::string_view id) cons
 }
 
 std::expected<etal::Catalog, std::string> etal::Catalog::load(const std::vector<CatalogSource>& sources) {
-  std::vector<AppEntry> entries;
+  std::vector<AppEntry> entries, addons;
   // One pool per source: the origin of a component is the remote, and only one pool knows which.
   for (const auto& source : sources) {
     std::unique_ptr<AsPool, PoolDeleter> pool(as_pool_new());
@@ -207,9 +256,9 @@ std::expected<etal::Catalog, std::string> etal::Catalog::load(const std::vector<
     std::unique_ptr<AsComponentBox, BoxDeleter> box(as_pool_get_components(pool.get()));
     for (guint i = 0; i < as_component_box_len(box.get()); ++i) {
       if (auto entry = entryOf(as_component_box_index(box.get(), i), source)) {
-        entries.push_back(std::move(*entry));
+        (entry->extends.empty() ? entries : addons).push_back(std::move(*entry));
       }
     }
   }
-  return Catalog(std::move(entries));
+  return Catalog(std::move(entries), std::move(addons));
 }

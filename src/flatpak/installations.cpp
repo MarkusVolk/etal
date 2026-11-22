@@ -1,5 +1,6 @@
 #include "flatpak/installations.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <flatpak.h>
 #include <format>
@@ -167,4 +168,70 @@ etal::fetchRefInfo(InstallationKind installation, const std::string& remote, con
     g_object_unref(parsed);
   }
   return result;
+}
+
+std::string etal::installedRefKey(InstallationKind installation, std::string_view ref) {
+  return std::format("{}:{}", installation == InstallationKind::User ? 'u' : 's', ref);
+}
+
+std::unordered_set<std::string> etal::installedRefKeys() {
+  std::unordered_set<std::string> out;
+  auto installations = openInstallations(nullptr);
+  for (const auto& installation : installations) {
+    GPtrArray* refs = flatpak_installation_list_installed_refs(installation.handle, nullptr, nullptr);
+    for (guint i = 0; refs && i < refs->len; ++i) {
+      char* formatted = flatpak_ref_format_ref(FLATPAK_REF(g_ptr_array_index(refs, i)));
+      out.insert(installedRefKey(installation.kind, formatted));
+      g_free(formatted);
+    }
+    if (refs) {
+      g_ptr_array_unref(refs);
+    }
+  }
+  closeInstallations(installations);
+  return out;
+}
+
+namespace {
+  std::filesystem::path appDataRoot() { return std::filesystem::path(g_get_home_dir()) / ".var" / "app"; }
+
+  std::uint64_t directorySize(const std::filesystem::path& directory) {
+    std::uint64_t total = 0;
+    std::error_code error;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             directory, std::filesystem::directory_options::skip_permission_denied, error
+         );
+         !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+      std::error_code ignored;
+      if (it->is_regular_file(ignored) && !it->is_symlink(ignored)) {
+        total += it->file_size(ignored);
+      }
+    }
+    return total;
+  }
+} // namespace
+
+std::vector<etal::LeftoverData> etal::leftoverData(const std::vector<InstalledApp>& installed) {
+  std::unordered_set<std::string> owned;
+  for (const auto& app : installed) {
+    owned.insert(app.id);
+  }
+  std::vector<LeftoverData> out;
+  std::error_code error;
+  for (const auto& entry : std::filesystem::directory_iterator(appDataRoot(), error)) {
+    const std::string id = entry.path().filename().string();
+    if (entry.is_directory(error) && !owned.contains(id)) {
+      out.push_back({id, directorySize(entry.path())});
+    }
+  }
+  std::ranges::sort(out, {}, &LeftoverData::id);
+  return out;
+}
+
+void etal::deleteLeftoverData(const std::string& id) {
+  if (id.empty() || id.find('/') != std::string::npos || id.starts_with('.')) {
+    return;
+  }
+  std::error_code error;
+  std::filesystem::remove_all(appDataRoot() / id, error);
 }

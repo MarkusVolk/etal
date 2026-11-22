@@ -7,6 +7,7 @@ app_sources = files(
   'event_loop/glib_poll_source.cpp',
   'fs/directory_watch.cpp',
   'main.cpp',
+  'net/flathub_client.cpp',
   'net/http_client.cpp',
   'net/image_cache.cpp',
   'platform/clipboard.cpp',

@@ -25,6 +25,7 @@ namespace etal {
       std::function<void()> checkUpdates;
       std::function<void(std::uint64_t job)> cancel;
       std::function<void()> clearFinished;
+      std::function<void(const std::string& id)> deleteData;
       std::function<void()> changed;
     };
 
@@ -35,6 +36,7 @@ namespace etal {
     // checking: the remotes are being asked right now.
     void setUpdates(std::vector<UpdateItem> updates, bool checking);
     void setJobs(const std::deque<Job>& jobs);
+    void setLeftovers(std::vector<LeftoverData> leftovers);
     // Rebuilds what changed; call while the window's renderer is current.
     void sync(Renderer& renderer);
 
@@ -44,6 +46,7 @@ namespace etal {
     void rebuildJobs();
     void rebuildUpdates(Renderer& renderer);
     void rebuildInstalled(Renderer& renderer);
+    void rebuildLeftovers();
 
     Callbacks m_callbacks;
     ScrollViewState m_scrollState;
@@ -51,6 +54,11 @@ namespace etal {
     Flex* m_jobsBox = nullptr;
     Flex* m_updatesBox = nullptr;
     Flex* m_installedBox = nullptr;
+    Flex* m_leftoverBox = nullptr;
+    std::vector<LeftoverData> m_leftovers;
+    // The folder whose Delete was clicked once; the second click deletes.
+    std::string m_confirmDelete;
+    bool m_leftoversStale = true;
 
     const Catalog* m_catalog = nullptr;
     std::vector<InstalledApp> m_installed;

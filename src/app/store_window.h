@@ -9,6 +9,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "ui/controls/scroll_view.h"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -20,6 +21,7 @@
 class AnimationManager;
 class Button;
 class Flex;
+class Image;
 class Input;
 class Label;
 class RenderContext;
@@ -33,6 +35,7 @@ struct PointerEvent;
 namespace etal {
   class AppGridAdapter;
   class DetailsPage;
+  class FlathubClient;
   class ImageCache;
   class LibraryPage;
   class TransactionQueue;
@@ -46,6 +49,7 @@ namespace etal {
     SettingsStore& settings;
     ImageCache& images;
     TransactionQueue& queue;
+    FlathubClient& flathub;
   };
 
   // The store window: categories and the search field on the left, the apps that match on the right.
@@ -92,7 +96,11 @@ namespace etal {
     void showLibrary();
     void updateAll();
     void checkUpdates();
-    void setInstalled(std::vector<InstalledApp> apps);
+    void setInstalled(std::vector<InstalledApp> apps, std::unordered_set<std::string> refs);
+    void showDiscover();
+    void loadDiscover();
+    void syncAddons();
+    void scanLeftovers();
 
     Services m_services;
     WindowSurface m_surface;
@@ -111,7 +119,14 @@ namespace etal {
     DetailsPage* m_details = nullptr;
     LibraryPage* m_library = nullptr;
     Button* m_libraryButton = nullptr;
+    Button* m_discoverButton = nullptr;
+    Flex* m_discoverBox = nullptr;
+    Flex* m_banner = nullptr;
+    Image* m_bannerIcon = nullptr;
+    Label* m_bannerName = nullptr;
+    Label* m_bannerSummary = nullptr;
     Flex* m_header = nullptr;
+    Flex* m_gridBox = nullptr;
     VirtualGridView* m_grid = nullptr;
     Flex* m_status = nullptr;
     Spinner* m_spinner = nullptr;
@@ -133,6 +148,12 @@ namespace etal {
     Page m_previousPage = Page::Browse;
     std::vector<InstalledApp> m_installedApps;
     std::vector<UpdateItem> m_updates;
+    // Flathub's lists, as app ids: trending, popular, new, updated.
+    std::array<std::vector<std::string>, 4> m_collections;
+    std::size_t m_collection = 0;
+    std::string m_appOfTheDay;
+    bool m_discover = true;
+    bool m_bannerStale = true;
     bool m_checkingUpdates = false;
     std::string m_detailsName;
     std::optional<AppEntry> m_detailsEntry;
