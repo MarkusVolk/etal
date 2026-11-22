@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<components version="1.0" origin="flatpak">
+  <component type="desktop-application">
+    <id>org.example.Paint</id>
+    <name>Paint &amp; Draw</name>
+    <summary>Draw pictures with brushes</summary>
+    <developer id="org.example"><name>Example Team</name></developer>
+    <project_license>GPL-3.0-or-later</project_license>
+    <description>
+      <p>Paint is a <em>simple</em> drawing app.</p>
+      <ul>
+        <li>Brushes &lt;3</li>
+        <li>Layers</li>
+      </ul>
+    </description>
+    <categories><category>Graphics</category><category>2DGraphics</category></categories>
+    <keywords><keyword>brush</keyword><keyword>canvas</keyword></keywords>
+    <icon type="cached" width="64" height="64">org.example.Paint.png</icon>
+    <icon type="remote" width="128" height="128">https://example.org/paint-128.png</icon>
+    <screenshots>
+      <screenshot type="default">
+        <caption>The canvas</caption>
+        <image type="source" width="1920" height="1080">https://example.org/shot.png</image>
+        <image type="thumbnail" width="224" height="126">https://example.org/shot-224.png</image>
+        <image type="thumbnail" width="752" height="423">https://example.org/shot-752.png</image>
+        <image type="thumbnail" width="1248" height="702">https://example.org/shot-1248.png</image>
+      </screenshot>
+    </screenshots>
+    <url type="homepage">https://example.org/paint</url>
+    <url type="donation">https://example.org/donate</url>
+    <releases>
+      <release version="2.0" timestamp="1760000000"><description><p>New brushes.</p></description></release>
+      <release version="1.0" timestamp="1700000000"/>
+    </releases>
+    <content_rating type="oars-1.1"><content_attribute id="violence-cartoon">mild</content_attribute></content_rating>
+    <bundle type="flatpak" runtime="org.example.Platform/x86_64/1" sdk="org.example.Sdk/x86_64/1">app/org.example.Paint/x86_64/stable</bundle>
+    <custom><value key="flathub::verification::verified">true</value></custom>
+  </component>
+  <component type="desktop-application">
+    <id>org.example.Notes</id>
+    <name>Notes</name>
+    <summary>Write down what matters; a painter's notebook</summary>
+    <project_license>LicenseRef-proprietary</project_license>
+    <categories><category>Office</category></categories>
+    <bundle type="flatpak">app/org.example.Notes/x86_64/stable</bundle>
+  </component>
+  <component type="runtime">
+    <id>org.example.Platform</id>
+    <name>Example Platform</name>
+    <summary>A runtime</summary>
+    <bundle type="flatpak">runtime/org.example.Platform/x86_64/1</bundle>
+  </component>
+  <component type="desktop-application">
+    <id>org.example.NoBundle</id>
+    <name>No Bundle</name>
+    <summary>Not a flatpak</summary>
+  </component>
+</components>

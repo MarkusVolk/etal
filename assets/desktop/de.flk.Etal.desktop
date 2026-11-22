@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Etal
+GenericName=Software
+Comment=Find, install and update Flatpak apps
+Exec=etal %F
+Icon=de.flk.Etal
+Terminal=false
+Categories=System;PackageManager;
+Keywords=apps;software;store;flatpak;flathub;install;update;
+StartupWMClass=de.flk.Etal
