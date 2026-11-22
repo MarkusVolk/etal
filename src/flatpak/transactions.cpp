@@ -171,6 +171,7 @@ namespace {
       break;
     }
     case etal::JobKind::AddRemote:
+    case etal::JobKind::RemoveRemote:
       break;
     }
     if (!ok) {
@@ -193,6 +194,11 @@ namespace {
     GBytes* bytes = g_bytes_new_take(contents, length);
     FlatpakRemote* remote = flatpak_remote_new_from_file(request.remote.c_str(), bytes, &error);
     g_bytes_unref(bytes);
+    if (!remote) {
+      std::string message = std::format("Not a .flatpakrepo file: {}", error ? error->message : "it cannot be read");
+      g_clear_error(&error);
+      return std::unexpected(std::move(message));
+    }
     const bool ok = remote && flatpak_installation_add_remote(installation, remote, TRUE, nullptr, &error);
     if (remote) {
       g_object_unref(remote);
@@ -243,9 +249,21 @@ etal::runJob(const JobRequest& request, const ProgressFn& progress, GCancellable
     ~Closer() { g_object_unref(installation); }
   } closer{installation};
 
+  if (request.noInteraction) {
+    flatpak_installation_set_no_interaction(installation, TRUE);
+  }
   if (request.kind == JobKind::AddRemote) {
     progress({0.0, std::format("Adding {}", request.remote)});
     return addRemote(installation, request);
+  }
+  if (request.kind == JobKind::RemoveRemote) {
+    progress({0.0, std::format("Removing {}", request.remote)});
+    if (!flatpak_installation_remove_remote(installation, request.remote.c_str(), nullptr, &error)) {
+      std::string message = error ? error->message : "cannot remove the remote";
+      g_clear_error(&error);
+      return std::unexpected(std::move(message));
+    }
+    return {};
   }
 
   FlatpakTransaction* transaction = flatpak_transaction_new_for_installation(installation, cancellable, &error);
@@ -254,6 +272,7 @@ etal::runJob(const JobRequest& request, const ProgressFn& progress, GCancellable
     g_clear_error(&error);
     return std::unexpected(std::move(message));
   }
+  flatpak_transaction_set_no_interaction(transaction, request.noInteraction);
   Run run;
   run.progress = &progress;
   run.transaction = transaction;
@@ -344,13 +363,13 @@ etal::UpdateScan etal::listUpdates() {
           .newPermissions = {},
       };
       g_free(formatted);
-      const char* latest = flatpak_installed_ref_get_latest_commit(installed);
-      item.partsOnly = !latest || str(latest) == str(flatpak_ref_get_commit(ref));
       FlatpakRemoteRef* remote = flatpak_installation_fetch_remote_ref_sync(
           installation, item.remote.c_str(), flatpak_ref_get_kind(ref), flatpak_ref_get_name(ref), flatpak_ref_get_arch(ref),
           flatpak_ref_get_branch(ref), nullptr, nullptr
       );
       if (remote) {
+        // The remote offers the commit that is installed: the update is for parts of the ref only.
+        item.partsOnly = str(flatpak_ref_get_commit(FLATPAK_REF(remote))) == str(flatpak_ref_get_commit(ref));
         item.downloadSize = item.partsOnly ? 0 : flatpak_remote_ref_get_download_size(remote);
         if (!item.runtime && !item.partsOnly) {
           GBytes* newBytes = flatpak_remote_ref_get_metadata(remote);

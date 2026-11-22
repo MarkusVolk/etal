@@ -235,3 +235,49 @@ void etal::deleteLeftoverData(const std::string& id) {
   std::error_code error;
   std::filesystem::remove_all(appDataRoot() / id, error);
 }
+
+std::vector<etal::RemoteInfo> etal::listRemotes() {
+  std::vector<RemoteInfo> out;
+  auto installations = openInstallations(nullptr);
+  for (const auto& installation : installations) {
+    GPtrArray* remotes = flatpak_installation_list_remotes(installation.handle, nullptr, nullptr);
+    for (guint i = 0; remotes && i < remotes->len; ++i) {
+      auto* remote = static_cast<FlatpakRemote*>(g_ptr_array_index(remotes, i));
+      char* title = flatpak_remote_get_title(remote);
+      char* url = flatpak_remote_get_url(remote);
+      out.push_back({
+          .name = str(flatpak_remote_get_name(remote)),
+          .title = str(title),
+          .url = str(url),
+          .installation = installation.kind,
+          .disabled = flatpak_remote_get_disabled(remote) != FALSE,
+      });
+      g_free(title);
+      g_free(url);
+    }
+    if (remotes) {
+      g_ptr_array_unref(remotes);
+    }
+  }
+  closeInstallations(installations);
+  return out;
+}
+
+std::vector<etal::UnusedRef> etal::listUnusedRefs() {
+  std::vector<UnusedRef> out;
+  auto installations = openInstallations(nullptr);
+  for (const auto& installation : installations) {
+    GPtrArray* refs = flatpak_installation_list_unused_refs(installation.handle, nullptr, nullptr, nullptr);
+    for (guint i = 0; refs && i < refs->len; ++i) {
+      auto* ref = static_cast<FlatpakInstalledRef*>(g_ptr_array_index(refs, i));
+      char* formatted = flatpak_ref_format_ref(FLATPAK_REF(ref));
+      out.push_back({str(formatted), installation.kind, flatpak_installed_ref_get_installed_size(ref)});
+      g_free(formatted);
+    }
+    if (refs) {
+      g_ptr_array_unref(refs);
+    }
+  }
+  closeInstallations(installations);
+  return out;
+}

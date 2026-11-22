@@ -30,6 +30,24 @@ namespace etal {
   };
   RemoteScan scanRemotes();
 
+  struct RemoteInfo {
+    std::string name;
+    std::string title;
+    std::string url;
+    InstallationKind installation = InstallationKind::User;
+    bool disabled = false;
+  };
+  // Every remote of both installations, disabled ones too.
+  std::vector<RemoteInfo> listRemotes();
+
+  // A runtime or extension that nothing installed needs any more.
+  struct UnusedRef {
+    std::string ref;
+    InstallationKind installation = InstallationKind::User;
+    std::uint64_t installedSize = 0;
+  };
+  std::vector<UnusedRef> listUnusedRefs();
+
   // Downloads the appstream data of one remote. The system installation asks polkit.
   std::expected<void, std::string> refreshAppstream(const CatalogSource& source);
 

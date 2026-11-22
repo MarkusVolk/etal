@@ -1,0 +1,10 @@
+[Unit]
+Description=Look for updates of Flatpak apps once a day
+
+[Timer]
+OnStartupSec=5min
+OnUnitActiveSec=1d
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

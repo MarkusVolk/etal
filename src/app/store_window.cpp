@@ -1,6 +1,9 @@
 #include "app/store_window.h"
 
 #include "app/worker.h"
+#include "etal_build_info.h"
+#include "flatpak/update_plan.h"
+#include "platform/notifier.h"
 #include "catalog/categories.h"
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
@@ -12,6 +15,7 @@
 #include "ui/app_tile.h"
 #include "ui/details_page.h"
 #include "ui/library_page.h"
+#include "ui/settings_page.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/image.h"
@@ -25,6 +29,7 @@
 #include "wayland/wayland_connection.h"
 
 #include <format>
+#include <tuple>
 #include <gio/gio.h>
 #include <linux/input-event-codes.h>
 #include <stdexcept>
@@ -168,7 +173,18 @@ void etal::StoreWindow::loaded(Loaded result) {
   kLog.info("{} apps, {} installed", m_catalog.entries().size(), m_installed.size());
   m_resultsStale = true;
   checkUpdates();
+  if (auto [name, parameter] = std::exchange(m_pendingAction, {}); !name.empty() && !action(name, parameter)) {
+    kLog.warn("no action named {}", name);
+  }
   requestUpdate();
+}
+
+void etal::StoreWindow::actionWhenLoaded(std::string name, std::string parameter) {
+  if (m_loading) {
+    m_pendingAction = {std::move(name), std::move(parameter)};
+  } else if (!action(name, parameter)) {
+    kLog.warn("no action named {}", name);
+  }
 }
 
 void etal::StoreWindow::setInstalled(std::vector<InstalledApp> apps, std::unordered_set<std::string> refs) {
@@ -237,9 +253,72 @@ void etal::StoreWindow::checkUpdates() {
     if (m_library) {
       m_library->setUpdates(m_updates, false);
     }
+    if (std::exchange(m_backgroundCheck, false)) {
+      backgroundFollowUp();
+    }
     m_sidebarStale = true;
     requestUpdate();
   });
+}
+
+void etal::StoreWindow::backgroundCheck() {
+  // Fresh catalogs first, as `etal --check-updates` gets them; reading them leads to checkUpdates().
+  m_backgroundCheck = true;
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<bool>(
+      [] {
+        RemoteScan scan = scanRemotes();
+        for (const auto& source : scan.sources) {
+          // Without a network the catalogs on disk stay; the check goes on with them.
+          std::ignore = refreshAppstream(source);
+        }
+        return true;
+      },
+      [this, alive](bool) {
+        if (!alive.expired()) {
+          load();
+        }
+      }
+  );
+}
+
+void etal::StoreWindow::backgroundFollowUp() {
+  UpdatePlan plan = planUpdates(m_updates, m_settings.automaticUpdates);
+  for (const auto kind : {InstallationKind::User, InstallationKind::System}) {
+    JobRequest request;
+    request.kind = JobKind::Update;
+    request.installation = kind;
+    // Nobody may be there to answer a password prompt.
+    request.noInteraction = true;
+    for (const auto& item : plan.automatic) {
+      if (item.installation == kind) {
+        request.refs.push_back(item.ref);
+      }
+    }
+    if (request.refs.empty()) {
+      continue;
+    }
+    request.title = std::format("{} automatically ({})", request.refs.size() == 1 ? "1 update" : std::format("{} updates", request.refs.size()),
+                                kind == InstallationKind::User ? "user" : "system");
+    m_services.queue.enqueue(std::move(request));
+  }
+  if (!m_settings.updateNotifications) {
+    return;
+  }
+  CheckOutcome outcome;
+  outcome.pending = std::move(plan.manual);
+  const auto notice = noticeFor(outcome, [this](const std::string& id) {
+    const auto found = m_catalog.find(id);
+    return found.empty() ? id : found.front()->name;
+  });
+  if (notice) {
+    std::weak_ptr<int> alive = m_alive;
+    m_services.notifier.notify(notice->summary, notice->body, [this, alive] {
+      if (!alive.expired()) {
+        showLibrary();
+      }
+    });
+  }
 }
 
 void etal::StoreWindow::rebuildResults() {
@@ -351,6 +430,17 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     showBrowse();
   } else if (name == "installed") {
     showLibrary();
+  } else if (name == "settings") {
+    showSettings();
+  } else if (name == "background-check") {
+    backgroundCheck();
+  } else if (name == "remove-remote" && !parameter.empty()) {
+    // Of the user installation; the system's goes through the Settings page.
+    JobRequest request;
+    request.kind = JobKind::RemoveRemote;
+    request.remote = parameter;
+    request.title = std::format("remote {}", parameter);
+    m_services.queue.enqueue(std::move(request));
   } else if (name == "check-updates") {
     checkUpdates();
   } else if (name == "update-all") {
@@ -524,11 +614,13 @@ void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
       kLog.warn("{}: {}", job.request.title, job.error);
     }
     refreshInstalled();
-    if (job.request.kind == JobKind::AddRemote && job.state == JobState::Done) {
+    const bool remote = job.request.kind == JobKind::AddRemote || job.request.kind == JobKind::RemoveRemote;
+    if (remote && job.state == JobState::Done) {
       load();
     } else {
       checkUpdates();
     }
+    scanSettingsData();
   }
   if (m_library) {
     m_library->setJobs(m_services.queue.jobs());
@@ -564,6 +656,26 @@ void etal::StoreWindow::showLibrary() {
   m_page = Page::Library;
   m_sidebarStale = true;
   requestUpdate();
+}
+
+void etal::StoreWindow::showSettings() {
+  m_page = Page::Settings;
+  m_sidebarStale = true;
+  scanSettingsData();
+  requestUpdate();
+}
+
+void etal::StoreWindow::scanSettingsData() {
+  using Data = std::pair<std::vector<RemoteInfo>, std::vector<UnusedRef>>;
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<Data>([] { return Data{listRemotes(), listUnusedRefs()}; }, [this, alive](Data data) {
+    if (alive.expired() || !m_settingsPage) {
+      return;
+    }
+    m_settingsPage->setRemotes(std::move(data.first));
+    m_settingsPage->setUnused(std::move(data.second));
+    requestUpdate();
+  });
 }
 
 // ── Scene ────────────────────────────────────────────────────────────────────
@@ -623,6 +735,15 @@ void etal::StoreWindow::build() {
   for (const auto& category : mainCategories()) {
     sidebar->addChild(categoryButton(std::string(category.id), category.title, category.glyph));
   }
+  sidebar->addChild(ui::spacer());
+  sidebar->addChild(ui::button({
+      .out = &m_settingsButton,
+      .text = "Settings",
+      .glyph = "adjustments-horizontal",
+      .contentAlign = ButtonContentAlign::Start,
+      .variant = ButtonVariant::Ghost,
+      .onClick = [this] { showSettings(); },
+  }));
   m_root->addChild(std::move(sidebar));
 
   auto content = ui::column({.align = FlexAlign::Stretch, .flexGrow = 1.0F});
@@ -898,20 +1019,77 @@ void etal::StoreWindow::build() {
   m_library->setUpdates(m_updates, m_checkingUpdates);
   m_library->setJobs(m_services.queue.jobs());
   content->addChild(std::move(library));
+  auto settings = std::make_unique<SettingsPage>(
+      m_settings, ETAL_VERSION,
+      SettingsPage::Callbacks{
+          .save =
+              [this](const Settings& changed) {
+                // The filters live in the header; this page does not know them.
+                const bool verified = m_settings.onlyVerified, free = m_settings.onlyFree;
+                m_settings = changed;
+                m_settings.onlyVerified = verified;
+                m_settings.onlyFree = free;
+                m_services.settings.save(m_settings);
+              },
+          .removeUnused =
+              [this] {
+                std::weak_ptr<int> alive = m_alive;
+                runInThread<std::vector<UnusedRef>>([] { return listUnusedRefs(); }, [this, alive](std::vector<UnusedRef> unused) {
+                  if (alive.expired()) {
+                    return;
+                  }
+                  for (const auto kind : {InstallationKind::User, InstallationKind::System}) {
+                    JobRequest request;
+                    request.kind = JobKind::Uninstall;
+                    request.installation = kind;
+                    for (const auto& ref : unused) {
+                      if (ref.installation == kind) {
+                        request.refs.push_back(ref.ref);
+                      }
+                    }
+                    if (!request.refs.empty()) {
+                      request.title = std::format("{} unused {}", request.refs.size(), request.refs.size() == 1 ? "runtime" : "runtimes");
+                      m_services.queue.enqueue(std::move(request));
+                    }
+                  }
+                });
+              },
+          .removeRemote =
+              [this](const RemoteInfo& remote) {
+                JobRequest request;
+                request.kind = JobKind::RemoveRemote;
+                request.installation = remote.installation;
+                request.remote = remote.name;
+                request.title = std::format("remote {}", remote.name);
+                m_services.queue.enqueue(std::move(request));
+              },
+          .changed = [this] { requestUpdate(); },
+      }
+  );
+  settings->setFlexGrow(1.0F);
+  settings->setVisible(false);
+  settings->setParticipatesInLayout(false);
+  m_settingsPage = settings.get();
+  content->addChild(std::move(settings));
   m_root->addChild(std::move(content));
 }
 
 void etal::StoreWindow::syncSidebar() {
+  // An app's page keeps the mark of the list it was opened from.
+  const Page shown = m_page == Page::Details ? m_previousPage : m_page;
+  const bool browsing = shown == Page::Browse || shown == Page::Details;
   for (auto& [id, button] : m_categoryButtons) {
-    const bool selected = m_page != Page::Library && !m_discover && m_query.empty() && id == m_category;
+    const bool selected = browsing && !m_discover && m_query.empty() && id == m_category;
     button->setVariant(selected ? ButtonVariant::Secondary : ButtonVariant::Ghost);
     button->setSelected(selected);
   }
-  const bool discover = m_page != Page::Library && m_discover && m_query.empty();
+  const bool discover = browsing && m_discover && m_query.empty();
   m_discoverButton->setVariant(discover ? ButtonVariant::Secondary : ButtonVariant::Ghost);
   m_discoverButton->setSelected(discover);
-  m_libraryButton->setVariant(m_page == Page::Library ? ButtonVariant::Secondary : ButtonVariant::Ghost);
-  m_libraryButton->setSelected(m_page == Page::Library);
+  m_libraryButton->setVariant(shown == Page::Library ? ButtonVariant::Secondary : ButtonVariant::Ghost);
+  m_libraryButton->setSelected(shown == Page::Library);
+  m_settingsButton->setVariant(shown == Page::Settings ? ButtonVariant::Secondary : ButtonVariant::Ghost);
+  m_settingsButton->setSelected(shown == Page::Settings);
   const std::size_t waiting = m_updates.size() + m_services.queue.pendingCount();
   m_libraryButton->setBadge(waiting > 0 ? std::to_string(waiting) : std::string());
   m_verifiedButton->setVariant(m_settings.onlyVerified ? ButtonVariant::Secondary : ButtonVariant::Outline);
@@ -1007,7 +1185,12 @@ void etal::StoreWindow::prepare() {
   } else if (m_page == Page::Library) {
     m_library->sync(renderer);
     m_surface.setTitle("Installed — Etal");
+  } else if (m_page == Page::Settings) {
+    m_settingsPage->sync();
+    m_surface.setTitle("Settings — Etal");
   }
+  m_settingsPage->setVisible(m_page == Page::Settings);
+  m_settingsPage->setParticipatesInLayout(m_page == Page::Settings);
 
   const auto width = static_cast<float>(m_surface.width()), height = static_cast<float>(m_surface.height());
   m_root->arrange(renderer, {0, 0, width, height});

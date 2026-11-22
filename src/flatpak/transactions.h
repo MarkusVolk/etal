@@ -21,6 +21,8 @@ namespace etal {
     InstallFile,
     // A .flatpakrepo in `file`, added as `remote`.
     AddRemote,
+    // Forgets `remote`; what was installed from it stays.
+    RemoveRemote,
   };
 
   struct JobRequest {
@@ -33,6 +35,8 @@ namespace etal {
     std::string title;
     bool deleteData = false;
     std::filesystem::path file;
+    // For a run nobody watches: fail instead of asking polkit for a password.
+    bool noInteraction = false;
   };
 
   struct JobProgress {

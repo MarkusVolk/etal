@@ -93,6 +93,7 @@ flatpak_lib = static_library('etal-flatpak',
   files(
     'src/flatpak/installations.cpp',
     'src/flatpak/transactions.cpp',
+    'src/flatpak/update_plan.cpp',
     'src/queue/transaction_queue.cpp',
   ),
   include_directories: src_inc,
@@ -111,4 +112,12 @@ install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadi
 install_data('assets/templates/colors.toml', install_dir: get_option('datadir') / 'etal/templates')
 install_data('assets/desktop/de.flk.Etal.desktop', install_dir: get_option('datadir') / 'applications')
 install_data('assets/icons/de.flk.Etal.svg', install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
+systemd_user_dir = get_option('prefix') / 'lib/systemd/user'
+configure_file(
+  input: 'data/systemd/etal-update.service.in',
+  output: 'etal-update.service',
+  configuration: {'bindir': get_option('prefix') / get_option('bindir')},
+  install_dir: systemd_user_dir,
+)
+install_data('data/systemd/etal-update.timer', install_dir: systemd_user_dir)
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/etal')

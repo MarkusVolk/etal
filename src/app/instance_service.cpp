@@ -129,6 +129,33 @@ bool etal::InstanceService::forward(
   return true;
 }
 
+bool etal::InstanceService::sendAction(const std::string& action, const std::string& parameter) {
+  GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
+  if (!bus) {
+    return false;
+  }
+  GVariantBuilder parameters;
+  g_variant_builder_init(&parameters, G_VARIANT_TYPE("av"));
+  if (!parameter.empty()) {
+    g_variant_builder_add(&parameters, "v", g_variant_new_string(parameter.c_str()));
+  }
+  GVariantBuilder platform;
+  g_variant_builder_init(&platform, G_VARIANT_TYPE_VARDICT);
+  if (const char* token = g_getenv("XDG_ACTIVATION_TOKEN")) {
+    g_variant_builder_add(&platform, "{sv}", "activation-token", g_variant_new_string(token));
+  }
+  GVariant* reply = g_dbus_connection_call_sync(
+      bus, kBusName, kObjectPath, kInterface, "ActivateAction", g_variant_new("(sava{sv})", action.c_str(), &parameters, &platform),
+      nullptr, G_DBUS_CALL_FLAGS_NO_AUTO_START, -1, nullptr, nullptr
+  );
+  g_object_unref(bus);
+  if (!reply) {
+    return false;
+  }
+  g_variant_unref(reply);
+  return true;
+}
+
 void etal::InstanceService::setHandler(Handler handler) {
   m_handler = std::move(handler);
   auto pending = std::exchange(m_pending, {});

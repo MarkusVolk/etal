@@ -38,6 +38,8 @@ namespace etal {
   class FlathubClient;
   class ImageCache;
   class LibraryPage;
+  class Notifier;
+  class SettingsPage;
   class TransactionQueue;
   struct Job;
 
@@ -50,6 +52,7 @@ namespace etal {
     ImageCache& images;
     TransactionQueue& queue;
     FlathubClient& flathub;
+    Notifier& notifier;
   };
 
   // The store window: categories and the search field on the left, the apps that match on the right.
@@ -62,6 +65,8 @@ namespace etal {
 
     // Runs a named action ("search", "category", "reload", ...); false when there is none of that name.
     bool action(const std::string& name, const std::string& parameter);
+    // The same, once the catalogs are read: for the action a launch came with.
+    void actionWhenLoaded(std::string name, std::string parameter);
     // Queues a .flatpakref or .flatpak bundle for installing, or adds the remote of a .flatpakrepo.
     void openFile(const std::filesystem::path& file);
     bool running() const { return m_surface.isRunning(); }
@@ -101,6 +106,10 @@ namespace etal {
     void loadDiscover();
     void syncAddons();
     void scanLeftovers();
+    void showSettings();
+    void scanSettingsData();
+    void backgroundCheck();
+    void backgroundFollowUp();
 
     Services m_services;
     WindowSurface m_surface;
@@ -118,6 +127,8 @@ namespace etal {
     Flex* m_browse = nullptr;
     DetailsPage* m_details = nullptr;
     LibraryPage* m_library = nullptr;
+    SettingsPage* m_settingsPage = nullptr;
+    Button* m_settingsButton = nullptr;
     Button* m_libraryButton = nullptr;
     Button* m_discoverButton = nullptr;
     Flex* m_discoverBox = nullptr;
@@ -142,7 +153,7 @@ namespace etal {
     std::string m_problem;
     bool m_resultsStale = true;
     bool m_sidebarStale = true;
-    enum class Page : std::uint8_t { Browse, Details, Library };
+    enum class Page : std::uint8_t { Browse, Details, Library, Settings };
     Page m_page = Page::Browse;
     // Where Back leads from an app's page.
     Page m_previousPage = Page::Browse;
@@ -155,6 +166,9 @@ namespace etal {
     bool m_discover = true;
     bool m_bannerStale = true;
     bool m_checkingUpdates = false;
+    // The check the timer asked for: its updates are installed or announced, as the settings say.
+    bool m_backgroundCheck = false;
+    std::pair<std::string, std::string> m_pendingAction;
     std::string m_detailsName;
     std::optional<AppEntry> m_detailsEntry;
     // The last job that touched the app on the details page, so a failure stays readable.

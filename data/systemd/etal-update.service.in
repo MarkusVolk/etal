@@ -1,0 +1,6 @@
+[Unit]
+Description=Look for updates of Flatpak apps
+After=network-online.target
+
+[Service]
+ExecStart=@bindir@/etal --check-updates

@@ -29,6 +29,18 @@ libcurl, and for the images librsvg, libwebp and libjxl.
 | Escape, Alt+Left | Back from an app's page |
 | Ctrl+Q, Ctrl+W | Quit |
 
+## Updates in the background
+
+`etal --check-updates` runs without a window: it refreshes the catalogs, looks for updates and
+tells you with a notification. With "Update automatically" switched on in the settings it installs
+them first, except those that ask for new permissions, and removes runtimes nothing needs any
+more. A running Etal is asked to do the same in its queue. The systemd user timer that comes with
+Etal runs this once a day:
+
+```sh
+systemctl --user enable --now etal-update.timer
+```
+
 ## The web
 
 The catalog comes from disk. From the web come the screenshots, and from Flathub's API the app of
@@ -38,7 +50,8 @@ used again when the network is away. Nothing about you is sent.
 ## Files
 
 `etal file.flatpakref` and `etal app.flatpak` install what the file names, `etal name.flatpakrepo`
-adds the remote under the file's name. A running Etal takes the file over.
+adds the remote under the file's name. A running Etal takes the file over. Remotes are listed, and
+removed, on the Settings page.
 
 ## Installations
 
@@ -65,7 +78,8 @@ notify = true
 
 ## Actions over D-Bus
 
-A running Etal takes named actions on `org.freedesktop.Application`:
+A running Etal takes named actions on `org.freedesktop.Application`; `etal --action NAME [PARAMETER]`
+sends one, and starts Etal when it does not run:
 
 ```sh
 busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application ActivateAction \
@@ -74,7 +88,8 @@ busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application Activate
 
 `search <text>`, `discover [trending|popular|recently-added|recently-updated]`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
 (empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`, `details <app id>`,
-`back`, and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
+`back`, `installed`, `settings`, `check-updates`, `update-all`, `background-check`,
+`remove-remote <name>` (of the user installation), and on the details page `install`, `remove [delete-data]`, `cancel`, `scroll <up|down|top>` and
 `screenshot <next|previous>`.
 
 ## Colours

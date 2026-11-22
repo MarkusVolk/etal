@@ -6,3 +6,4 @@ test('catalog', executable('catalog-test', 'catalog_test.cpp', dependencies: [ca
   env: {'ETAL_TEST_FIXTURES': fixtures})
 test('queue', executable('queue-test', 'queue_test.cpp', dependencies: [flatpak_dep]))
 test('leftover', executable('leftover-test', 'leftover_test.cpp', dependencies: [flatpak_dep]))
+test('update-plan', executable('update-plan-test', 'update_plan_test.cpp', dependencies: [flatpak_dep]))

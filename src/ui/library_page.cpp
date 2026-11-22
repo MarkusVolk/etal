@@ -190,6 +190,7 @@ void etal::LibraryPage::rebuildJobs() {
     const char* verb = job.request.kind == JobKind::Uninstall ? "Remove"
                      : job.request.kind == JobKind::Update    ? "Update"
                      : job.request.kind == JobKind::AddRemote ? "Add"
+                     : job.request.kind == JobKind::RemoveRemote ? "Remove"
                                                               : "Install";
     auto row = ui::row({
         .align = FlexAlign::Center,

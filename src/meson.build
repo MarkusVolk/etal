@@ -1,5 +1,6 @@
 app_sources = files(
   'app/application.cpp',
+  'app/background.cpp',
   'app/instance_service.cpp',
   'app/main_loop.cpp',
   'app/palette_watcher.cpp',
@@ -13,9 +14,11 @@ app_sources = files(
   'platform/clipboard.cpp',
   'platform/desktop_integration.cpp',
   'platform/launch_activation.cpp',
+  'platform/notifier.cpp',
   'ui/app_tile.cpp',
   'ui/details_page.cpp',
   'ui/library_page.cpp',
+  'ui/settings_page.cpp',
   'ui/palette_file.cpp',
 )
 

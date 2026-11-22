@@ -22,6 +22,7 @@
 #include "net/image_cache.h"
 #include "platform/clipboard.h"
 #include "platform/desktop_integration.h"
+#include "platform/notifier.h"
 #include "queue/transaction_queue.h"
 #include "render/animation/animation_manager.h"
 #include "render/codecs/codecs.h"
@@ -93,10 +94,10 @@ namespace {
   }
 } // namespace
 
-int etal::runApplication(const std::vector<std::string>& files) {
+int etal::runApplication(const Launch& launch) {
   initLogLevelFromEnvironment();
   std::vector<std::filesystem::path> paths;
-  for (const auto& file : files) {
+  for (const auto& file : launch.files) {
     std::error_code error;
     paths.push_back(std::filesystem::absolute(file, error).lexically_normal());
   }
@@ -104,6 +105,9 @@ int etal::runApplication(const std::vector<std::string>& files) {
   if (instance.role() == InstanceService::Role::Secondary) {
     const char* token = std::getenv("XDG_ACTIVATION_TOKEN");
     if (instance.forward(paths, token ? token : "")) {
+      if (!launch.action.empty()) {
+        InstanceService::sendAction(launch.action, launch.parameter);
+      }
       return EXIT_SUCCESS;
     }
   }
@@ -149,6 +153,7 @@ int etal::runApplication(const std::vector<std::string>& files) {
     HttpClientPollSource httpSource(http);
     ImageCache images(http);
     FlathubClient flathub(http);
+    Notifier notifier;
     TransactionQueue queue;
 
     {
@@ -160,10 +165,14 @@ int etal::runApplication(const std::vector<std::string>& files) {
            .settings = settings,
            .images = images,
            .queue = queue,
-           .flathub = flathub}
+           .flathub = flathub,
+           .notifier = notifier}
       );
       for (const auto& path : paths) {
         window.openFile(path);
+      }
+      if (!launch.action.empty()) {
+        window.actionWhenLoaded(launch.action, launch.parameter);
       }
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
         for (const auto& file : request.files) {

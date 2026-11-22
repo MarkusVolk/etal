@@ -39,6 +39,8 @@ namespace etal {
     InstanceService& operator=(const InstanceService&) = delete;
 
     Role role() const { return m_role; }
+    // Runs a named action in the running instance, without becoming one: false when none runs.
+    static bool sendAction(const std::string& action, const std::string& parameter);
     // Secondary only: hands the files of this launch to the primary process.
     bool forward(const std::vector<std::filesystem::path>& files, const std::string& activationToken);
     // Primary only: requests received before the handler is set are delivered here first.
