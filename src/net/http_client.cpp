@@ -2,6 +2,7 @@
 
 #include "core/deferred_call.h"
 #include "core/log.h"
+#include "etal_build_info.h"
 
 #include <cctype>
 #include <chrono>
@@ -15,7 +16,7 @@ namespace {
   constexpr float kSlowCurlOperationDebugMs = 50.0F;
   constexpr float kSlowCurlOperationWarnMs = 1000.0F;
   constexpr float kCurlServiceGapWarnMs = 5000.0F;
-  constexpr const char* kUserAgent = "noctalia/" NOCTALIA_VERSION;
+  constexpr const char* kUserAgent = "etal/" ETAL_VERSION;
 
   float elapsedSince(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count();

@@ -32,4 +32,16 @@ namespace etal {
   std::expected<void, std::string> refreshAppstream(const CatalogSource& source);
 
   std::vector<InstalledApp> installedApps();
+
+  // What a remote says about one ref, for the details page: sizes, the metadata file with the
+  // permissions, and an end-of-life notice. Uses the remote's cached summary, so it is quick
+  // after the first call; blocks.
+  struct RefInfo {
+    std::uint64_t downloadSize = 0;
+    std::uint64_t installedSize = 0;
+    std::string metadata;
+    std::string endOfLife;
+    std::string endOfLifeRebase;
+  };
+  std::expected<RefInfo, std::string> fetchRefInfo(InstallationKind installation, const std::string& remote, const std::string& ref);
 } // namespace etal

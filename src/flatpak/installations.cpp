@@ -126,3 +126,45 @@ std::vector<etal::InstalledApp> etal::installedApps() {
   closeInstallations(installations);
   return out;
 }
+
+std::expected<etal::RefInfo, std::string>
+etal::fetchRefInfo(InstallationKind installation, const std::string& remote, const std::string& ref) {
+  GError* error = nullptr;
+  FlatpakRef* parsed = flatpak_ref_parse(ref.c_str(), &error);
+  FlatpakInstallation* handle = nullptr;
+  if (parsed) {
+    handle = installation == InstallationKind::User ? flatpak_installation_new_user(nullptr, &error)
+                                                    : flatpak_installation_new_system(nullptr, &error);
+  }
+  FlatpakRemoteRef* remoteRef = nullptr;
+  if (handle) {
+    flatpak_installation_set_no_interaction(handle, TRUE);
+    remoteRef = flatpak_installation_fetch_remote_ref_sync(
+        handle, remote.c_str(), flatpak_ref_get_kind(parsed), flatpak_ref_get_name(parsed), flatpak_ref_get_arch(parsed),
+        flatpak_ref_get_branch(parsed), nullptr, &error
+    );
+  }
+  std::expected<RefInfo, std::string> result = std::unexpected(std::format("{}: {}", ref, error ? error->message : "not found"));
+  if (remoteRef) {
+    RefInfo info;
+    info.downloadSize = flatpak_remote_ref_get_download_size(remoteRef);
+    info.installedSize = flatpak_remote_ref_get_installed_size(remoteRef);
+    if (GBytes* bytes = flatpak_remote_ref_get_metadata(remoteRef)) {
+      gsize size = 0;
+      const auto* data = static_cast<const char*>(g_bytes_get_data(bytes, &size));
+      info.metadata.assign(data ? data : "", size);
+    }
+    info.endOfLife = str(flatpak_remote_ref_get_eol(remoteRef));
+    info.endOfLifeRebase = str(flatpak_remote_ref_get_eol_rebase(remoteRef));
+    result = std::move(info);
+    g_object_unref(remoteRef);
+  }
+  g_clear_error(&error);
+  if (handle) {
+    g_object_unref(handle);
+  }
+  if (parsed) {
+    g_object_unref(parsed);
+  }
+  return result;
+}

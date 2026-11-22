@@ -25,6 +25,7 @@ libcurl, and for the images librsvg, libwebp and libjxl.
 | Key | Action |
 | --- | --- |
 | Ctrl+F | Search |
+| Escape, Alt+Left | Back from an app's page |
 | Ctrl+Q, Ctrl+W | Quit |
 
 ## Installations
@@ -60,7 +61,8 @@ busctl --user call de.flk.Etal /de/flk/Etal org.freedesktop.Application Activate
 ```
 
 `search <text>`, `category <AudioVideo|Development|Education|Game|Graphics|Network|Office|Science|System|Utility>`
-(empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`.
+(empty for all), `only-verified <true|false>`, `only-free <true|false>`, `reload`, `details <app id>`,
+`back`, and on the details page `scroll <up|down|top>` and `screenshot <next|previous>`.
 
 ## Colours
 

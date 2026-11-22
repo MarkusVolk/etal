@@ -42,6 +42,7 @@ gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 appstream = dependency('appstream', version: '>=1.0')
 flatpak = dependency('flatpak', version: '>=1.14')
+curl = dependency('libcurl')
 
 if cpp.get_define('_LIBCPP_VERSION', prefix: '#include <version>') != ''
   add_project_arguments('-fexperimental-library', language: 'cpp')
@@ -76,6 +77,7 @@ catalog_lib = static_library('etal-catalog',
     'src/catalog/catalog.cpp',
     'src/catalog/categories.cpp',
     'src/catalog/markup.cpp',
+    'src/catalog/safety.cpp',
     'src/catalog/search.cpp',
     'src/fs/xdg_dirs.cpp',
   ),

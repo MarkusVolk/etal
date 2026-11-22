@@ -9,6 +9,13 @@
 #include "ui/style.h"
 
 namespace {
+  ImageSourceOptions sourceOptions(int targetSize) {
+    ImageSourceOptions options;
+    options.targetSize = targetSize;
+    options.mipmap = true;
+    return options;
+  }
+
   constexpr float kIconSize = 64.0F;
 }
 
@@ -90,7 +97,7 @@ void etal::AppTile::bind(const AppEntry& entry, bool installed, bool selected, b
     if (m_iconFile.empty()) {
       m_icon->clear(renderer);
     } else {
-      m_icon->setSourceFile(renderer, m_iconFile, {.targetSize = static_cast<int>(kIconSize), .mipmap = true});
+      m_icon->setSourceFile(renderer, m_iconFile, sourceOptions(static_cast<int>(kIconSize)));
     }
   }
   m_icon->setVisible(!m_iconFile.empty());

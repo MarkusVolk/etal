@@ -8,6 +8,7 @@
 #include "core/ui_phase.h"
 #include "render/render_context.h"
 #include "ui/app_tile.h"
+#include "ui/details_page.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/input.h"
@@ -19,6 +20,7 @@
 #include "wayland/wayland_connection.h"
 
 #include <format>
+#include <gio/gio.h>
 #include <linux/input-event-codes.h>
 #include <stdexcept>
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -79,7 +81,7 @@ struct etal::StoreWindow::Loaded {
 etal::StoreWindow::StoreWindow(Services services)
     : m_services(services), m_surface(services.connection), m_settings(services.settings.settings()) {
   m_adapter = std::make_unique<AppGridAdapter>(m_catalog, m_results, m_installed);
-  m_adapter->setOnActivate([](const AppEntry& entry) { kLog.info("selected {} ({})", entry.id, entry.remote); });
+  m_adapter->setOnActivate([this](const AppEntry& entry) { showDetails(entry); });
   m_surface.setRenderContext(&m_services.renderer);
   m_surface.setAnimationManager(&m_services.animations);
   m_surface.setPrepareFrameCallback([this](bool, bool) { prepare(); });
@@ -176,6 +178,7 @@ void etal::StoreWindow::rebuildResults() {
 
 void etal::StoreWindow::selectCategory(std::string category) {
   m_category = std::move(category);
+  m_detailsShown = false;
   if (!m_query.empty()) {
     m_query.clear();
     if (m_search) {
@@ -192,6 +195,7 @@ void etal::StoreWindow::setQuery(std::string query) {
     return;
   }
   m_query = std::move(query);
+  m_detailsShown = false;
   m_resultsStale = true;
   m_sidebarStale = true;
   requestUpdate();
@@ -224,10 +228,55 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     }
   } else if (name == "reload") {
     load();
+  } else if (name == "details") {
+    const auto found = m_catalog.find(parameter);
+    if (found.empty()) {
+      return false;
+    }
+    showDetails(*found.front());
+  } else if (name == "back") {
+    showBrowse();
+  } else if (name == "scroll" && m_detailsShown) {
+    m_details->scrollPage(parameter == "up" ? -1 : parameter == "top" ? 0 : 1);
+  } else if (name == "screenshot" && m_detailsShown) {
+    m_details->stepScreenshot(parameter == "previous" ? -1 : 1);
   } else {
     return false;
   }
   return true;
+}
+
+bool etal::StoreWindow::isInstalled(const AppEntry& entry) const {
+  return m_installed.contains(installedKey(entry.installation, entry.id));
+}
+
+void etal::StoreWindow::showDetails(const AppEntry& entry) {
+  if (!m_details) {
+    return;
+  }
+  m_details->show(entry, isInstalled(entry));
+  m_detailsName = entry.name;
+  m_detailsShown = true;
+  std::weak_ptr<int> alive = m_alive;
+  const std::string ref = entry.ref;
+  runInThread<std::expected<RefInfo, std::string>>(
+      [kind = entry.installation, remote = entry.remote, ref] { return fetchRefInfo(kind, remote, ref); },
+      [this, alive, ref](std::expected<RefInfo, std::string> info) {
+        if (alive.expired()) {
+          return;
+        }
+        if (!info) {
+          kLog.warn("{}", info.error());
+        }
+        m_details->setRefInfo(ref, info);
+      }
+  );
+  requestUpdate();
+}
+
+void etal::StoreWindow::showBrowse() {
+  m_detailsShown = false;
+  requestUpdate();
 }
 
 // ── Scene ────────────────────────────────────────────────────────────────────
@@ -273,7 +322,8 @@ void etal::StoreWindow::build() {
   m_root->addChild(std::move(sidebar));
 
   auto content = ui::column({.align = FlexAlign::Stretch, .flexGrow = 1.0F});
-  content->addChild(ui::row(
+  auto browse = ui::column({.out = &m_browse, .align = FlexAlign::Stretch, .flexGrow = 1.0F});
+  browse->addChild(ui::row(
       {.out = &m_header, .align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceLg, .height = kHeaderHeight},
       ui::label({
           .out = &m_title,
@@ -309,7 +359,7 @@ void etal::StoreWindow::build() {
       })
   ));
 
-  content->addChild(ui::virtualGridView({
+  browse->addChild(ui::virtualGridView({
       .out = &m_grid,
       .state = &m_scrollState,
       .minCellWidth = kTileMinWidth,
@@ -325,7 +375,7 @@ void etal::StoreWindow::build() {
       },
   }));
 
-  content->addChild(ui::column(
+  browse->addChild(ui::column(
       {.out = &m_status, .align = FlexAlign::Center, .justify = FlexJustify::Center, .gap = Style::spaceMd, .flexGrow = 1.0F},
       ui::spinner({.out = &m_spinner, .spinnerSize = 32.0F}),
       ui::label({
@@ -336,6 +386,27 @@ void etal::StoreWindow::build() {
           .configure = [](Label& label) { label.setUseMarkup(false); },
       })
   ));
+  content->addChild(std::move(browse));
+  auto details = std::make_unique<DetailsPage>(
+      m_services.images,
+      DetailsPage::Callbacks{
+          .back = [this] { showBrowse(); },
+          .changed = [this] { requestUpdate(); },
+          .openUrl =
+              [](const std::string& url) {
+                GError* error = nullptr;
+                if (!g_app_info_launch_default_for_uri(url.c_str(), nullptr, &error)) {
+                  kLog.warn("cannot open {}: {}", url, error ? error->message : "no handler");
+                  g_clear_error(&error);
+                }
+              },
+      }
+  );
+  details->setFlexGrow(1.0F);
+  details->setVisible(false);
+  details->setParticipatesInLayout(false);
+  m_details = details.get();
+  content->addChild(std::move(details));
   m_root->addChild(std::move(content));
 }
 
@@ -395,6 +466,15 @@ void etal::StoreWindow::prepare() {
     m_statusText->setText(!m_problem.empty() ? m_problem : !m_query.empty() ? "No app matches the search." : "No apps here.");
   }
 
+  m_browse->setVisible(!m_detailsShown);
+  m_browse->setParticipatesInLayout(!m_detailsShown);
+  m_details->setVisible(m_detailsShown);
+  m_details->setParticipatesInLayout(m_detailsShown);
+  if (m_detailsShown) {
+    m_details->sync(renderer);
+    m_surface.setTitle(std::format("{} — Etal", m_detailsName));
+  }
+
   const auto width = static_cast<float>(m_surface.width()), height = static_cast<float>(m_surface.height());
   m_root->arrange(renderer, {0, 0, width, height});
 }
@@ -407,6 +487,14 @@ void etal::StoreWindow::keyboard(const KeyboardEvent& event) {
     if (event.modifiers == KeyMod::Ctrl && (sym == XKB_KEY_f || sym == XKB_KEY_F)) {
       m_dispatcher.setFocus(m_search->inputArea());
       requestUpdate();
+      return;
+    }
+    if (m_detailsShown && event.modifiers == 0 && sym == XKB_KEY_Escape) {
+      showBrowse();
+      return;
+    }
+    if (m_detailsShown && event.modifiers == KeyMod::Alt && sym == XKB_KEY_Left) {
+      showBrowse();
       return;
     }
     if (event.modifiers == KeyMod::Ctrl && (sym == XKB_KEY_q || sym == XKB_KEY_Q || sym == XKB_KEY_w || sym == XKB_KEY_W)) {

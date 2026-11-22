@@ -8,7 +8,7 @@ borrows application plumbing from [Luciole](https://github.com/noctalia-dev/luci
 - `lib/` is an unchanged copy of Noctalia's `lib/` with `third_party/wuffs/` for the codec pack,
   refreshed with `tools/sync-lib.sh`. Changes to it belong upstream.
 - `src/net/http_client.*` and `src/net/http_client_poll_source.h` are copied from Noctalia's
-  `src/net/`.
+  `src/net/`; only the user agent names Etal.
 - From Luciole, adapted: `src/app/main_loop.*`, `src/app/palette_watcher.*`, `src/event_loop/`,
   `src/fs/directory_watch.*`, `src/fs/gio_ptr.h`, `src/fs/xdg_dirs.*`,
   `src/platform/desktop_integration.*`, `src/platform/launch_activation.*`, `src/ui/palette_file.*`.

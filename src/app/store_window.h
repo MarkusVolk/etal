@@ -30,6 +30,8 @@ struct PointerEvent;
 
 namespace etal {
   class AppGridAdapter;
+  class DetailsPage;
+  class ImageCache;
 
   struct Services {
     WaylandConnection& connection;
@@ -37,6 +39,7 @@ namespace etal {
     TextInputService& textInput;
     AnimationManager& animations;
     SettingsStore& settings;
+    ImageCache& images;
   };
 
   // The store window: categories and the search field on the left, the apps that match on the right.
@@ -70,6 +73,9 @@ namespace etal {
     void toggleFilter(bool verified);
     void syncSidebar();
     void requestUpdate();
+    void showDetails(const AppEntry& entry);
+    void showBrowse();
+    bool isInstalled(const AppEntry& entry) const;
 
     Services m_services;
     WindowSurface m_surface;
@@ -84,6 +90,8 @@ namespace etal {
     Label* m_count = nullptr;
     Button* m_verifiedButton = nullptr;
     Button* m_freeButton = nullptr;
+    Flex* m_browse = nullptr;
+    DetailsPage* m_details = nullptr;
     Flex* m_header = nullptr;
     VirtualGridView* m_grid = nullptr;
     Flex* m_status = nullptr;
@@ -100,6 +108,8 @@ namespace etal {
     std::string m_problem;
     bool m_resultsStale = true;
     bool m_sidebarStale = true;
+    bool m_detailsShown = false;
+    std::string m_detailsName;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
   };
 } // namespace etal

@@ -7,10 +7,13 @@ app_sources = files(
   'event_loop/glib_poll_source.cpp',
   'fs/directory_watch.cpp',
   'main.cpp',
+  'net/http_client.cpp',
+  'net/image_cache.cpp',
   'platform/clipboard.cpp',
   'platform/desktop_integration.cpp',
   'platform/launch_activation.cpp',
   'ui/app_tile.cpp',
+  'ui/details_page.cpp',
   'ui/palette_file.cpp',
 )
 
@@ -18,7 +21,7 @@ executable('etal',
   app_sources + protocol_sources + protocol_headers + [build_info],
   include_directories: src_inc,
   dependencies: [
-    flatpak_dep, noctalia_ui_dep, noctalia_ui_codecs_dep, gio, gio_unix, tomlplusplus,
+    flatpak_dep, curl, noctalia_ui_dep, noctalia_ui_codecs_dep, gio, gio_unix, tomlplusplus,
     dependency('wayland-client'), dependency('wayland-cursor'), dependency('threads'),
   ],
   install: true,

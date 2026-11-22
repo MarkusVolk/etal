@@ -16,6 +16,9 @@
 #include "event_loop/deferred_call_poll_source.h"
 #include "event_loop/glib_poll_source.h"
 #include "event_loop/timer_poll_source.h"
+#include "net/http_client.h"
+#include "net/http_client_poll_source.h"
+#include "net/image_cache.h"
 #include "platform/clipboard.h"
 #include "platform/desktop_integration.h"
 #include "render/animation/animation_manager.h"
@@ -140,6 +143,9 @@ int etal::runApplication(const std::vector<std::string>& files) {
     renderer.setAsyncTextureCache(&textures);
     PaletteWatcher palette;
     AnimationManager animations;
+    HttpClient http;
+    HttpClientPollSource httpSource(http);
+    ImageCache images(http);
 
     {
       StoreWindow window(
@@ -147,7 +153,8 @@ int etal::runApplication(const std::vector<std::string>& files) {
            .renderer = renderer,
            .textInput = textInput,
            .animations = animations,
-           .settings = settings}
+           .settings = settings,
+           .images = images}
       );
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
         if (!request.files.empty()) {
@@ -171,7 +178,7 @@ int etal::runApplication(const std::vector<std::string>& files) {
       DeferredCallPollSource deferred;
       TimerPollSource timers;
       KeyRepeatPollSource repeat(connection);
-      MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &textures}, [&window] {
+      MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &textures, &httpSource}, [&window] {
         if (g_stopRequested && window.running()) {
           window.close();
         }
