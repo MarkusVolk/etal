@@ -9,6 +9,7 @@
 
 #include <deque>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,8 @@ namespace etal {
     std::vector<LeftoverData> m_leftovers;
     // The folder whose Delete was clicked once; the second click deletes.
     std::string m_confirmDelete;
+    // Folders being deleted right now; a large one takes a while.
+    std::set<std::string> m_deleting;
     bool m_leftoversStale = true;
 
     const Catalog* m_catalog = nullptr;

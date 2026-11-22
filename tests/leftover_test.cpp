@@ -13,7 +13,14 @@ int main() {
   const fs::path apps = home / ".var" / "app";
   fs::create_directories(apps / "org.example.Gone" / "config");
   fs::create_directories(apps / "org.example.Kept");
-  std::ofstream(apps / "org.example.Gone" / "config" / "settings") << std::string(1000, 'x');
+  std::ofstream(apps / "org.example.Gone" / "config" / "settings") << std::string(65536, 'x');
+  // A second name for the same file counts once, and a sparse file by what it holds.
+  fs::create_hard_link(apps / "org.example.Gone" / "config" / "settings", apps / "org.example.Gone" / "config" / "again");
+  {
+    std::ofstream sparse(apps / "org.example.Gone" / "database");
+    sparse.seekp(64 * 1024 * 1024);
+    sparse << 'x';
+  }
   std::ofstream(apps / "org.example.Kept" / "data") << "y";
   setenv("HOME", home.c_str(), 1);
 
@@ -22,7 +29,9 @@ int main() {
   const auto found = etal::leftoverData({kept});
   CHECK(found.size() == 1);
   CHECK(found[0].id == "org.example.Gone");
-  CHECK(found[0].size == 1000);
+  // What is on disk: the 64 KiB once and little for the sparse 64 MiB, give or take the blocks of the folders.
+  CHECK(found[0].size >= 65536);
+  CHECK(found[0].size < 1024 * 1024);
 
   // Nothing outside ~/.var/app, and nothing by a path.
   etal::deleteLeftoverData("../app/org.example.Kept");

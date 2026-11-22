@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -50,6 +52,20 @@ namespace etal {
 
   // Downloads the appstream data of one remote. The system installation asks polkit.
   std::expected<void, std::string> refreshAppstream(const CatalogSource& source);
+
+  // Tells when something was installed, updated or removed by another program, such as the
+  // flatpak command. Create it on the main thread; `changed` runs there, once per burst.
+  class InstallationWatch {
+  public:
+    explicit InstallationWatch(std::function<void()> changed);
+    ~InstallationWatch();
+    InstallationWatch(const InstallationWatch&) = delete;
+    InstallationWatch& operator=(const InstallationWatch&) = delete;
+
+  private:
+    struct State;
+    std::unique_ptr<State> m_state;
+  };
 
   std::vector<InstalledApp> installedApps();
   // Every installed ref, apps, runtimes and extensions, as installedRefKey().

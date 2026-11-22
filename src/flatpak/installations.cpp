@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <flatpak.h>
 #include <format>
+#include <set>
+#include <sys/stat.h>
 
 namespace {
   struct Installation {
@@ -195,17 +197,24 @@ std::unordered_set<std::string> etal::installedRefKeys() {
 namespace {
   std::filesystem::path appDataRoot() { return std::filesystem::path(g_get_home_dir()) / ".var" / "app"; }
 
+  // The space the folder takes on disk, as `du` counts it: allocated blocks, a file with several
+  // names once. The lengths of the files say more for sparse databases and less for tiny files.
   std::uint64_t directorySize(const std::filesystem::path& directory) {
     std::uint64_t total = 0;
+    std::set<std::pair<dev_t, ino_t>> linked;
     std::error_code error;
     for (auto it = std::filesystem::recursive_directory_iterator(
              directory, std::filesystem::directory_options::skip_permission_denied, error
          );
          !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
-      std::error_code ignored;
-      if (it->is_regular_file(ignored) && !it->is_symlink(ignored)) {
-        total += it->file_size(ignored);
+      struct stat info {};
+      if (lstat(it->path().c_str(), &info) != 0) {
+        continue;
       }
+      if (info.st_nlink > 1 && !S_ISDIR(info.st_mode) && !linked.emplace(info.st_dev, info.st_ino).second) {
+        continue;
+      }
+      total += static_cast<std::uint64_t>(info.st_blocks) * 512U;
     }
     return total;
   }
@@ -280,4 +289,51 @@ std::vector<etal::UnusedRef> etal::listUnusedRefs() {
   }
   closeInstallations(installations);
   return out;
+}
+
+struct etal::InstallationWatch::State {
+  std::function<void()> changed;
+  std::vector<GFileMonitor*> monitors;
+  guint settle = 0;
+
+  static void onChanged(GFileMonitor*, GFile*, GFile*, GFileMonitorEvent, gpointer data) {
+    auto* self = static_cast<State*>(data);
+    // A transaction touches the installation many times: tell once it has been quiet for a moment.
+    if (self->settle != 0) {
+      g_source_remove(self->settle);
+    }
+    self->settle = g_timeout_add(
+        1500,
+        [](gpointer data) -> gboolean {
+          auto* self = static_cast<State*>(data);
+          self->settle = 0;
+          self->changed();
+          return G_SOURCE_REMOVE;
+        },
+        self
+    );
+  }
+};
+
+etal::InstallationWatch::InstallationWatch(std::function<void()> changed) : m_state(std::make_unique<State>()) {
+  m_state->changed = std::move(changed);
+  auto installations = openInstallations(nullptr);
+  for (const auto& installation : installations) {
+    if (GFileMonitor* monitor = flatpak_installation_create_monitor(installation.handle, nullptr, nullptr)) {
+      g_signal_connect(monitor, "changed", G_CALLBACK(State::onChanged), m_state.get());
+      m_state->monitors.push_back(monitor);
+    }
+  }
+  closeInstallations(installations);
+}
+
+etal::InstallationWatch::~InstallationWatch() {
+  if (m_state->settle != 0) {
+    g_source_remove(m_state->settle);
+  }
+  for (GFileMonitor* monitor : m_state->monitors) {
+    g_signal_handlers_disconnect_by_data(monitor, m_state.get());
+    g_file_monitor_cancel(monitor);
+    g_object_unref(monitor);
+  }
 }

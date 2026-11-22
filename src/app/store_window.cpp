@@ -106,6 +106,13 @@ etal::StoreWindow::StoreWindow(Services services)
   }
   m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_services.textInput);
   m_services.queue.setOnChanged([this](const Job& job, bool finished) { jobChanged(job, finished); });
+  // What the flatpak command or another store did; our own jobs refresh when they end.
+  m_watch = std::make_unique<InstallationWatch>([this] {
+    if (!m_services.queue.busy()) {
+      refreshInstalled();
+      checkUpdates();
+    }
+  });
   load();
   loadDiscover();
 }
@@ -233,6 +240,8 @@ void etal::StoreWindow::loadDiscover() {
 
 void etal::StoreWindow::checkUpdates() {
   if (m_checkingUpdates) {
+    // The answer on its way may already be out of date.
+    m_recheckUpdates = true;
     return;
   }
   m_checkingUpdates = true;
@@ -253,7 +262,9 @@ void etal::StoreWindow::checkUpdates() {
     if (m_library) {
       m_library->setUpdates(m_updates, false);
     }
-    if (std::exchange(m_backgroundCheck, false)) {
+    if (std::exchange(m_recheckUpdates, false)) {
+      checkUpdates();
+    } else if (std::exchange(m_backgroundCheck, false)) {
       backgroundFollowUp();
     }
     m_sidebarStale = true;

@@ -166,6 +166,7 @@ namespace etal {
     bool m_discover = true;
     bool m_bannerStale = true;
     bool m_checkingUpdates = false;
+    bool m_recheckUpdates = false;
     // The check the timer asked for: its updates are installed or announced, as the settings say.
     bool m_backgroundCheck = false;
     std::pair<std::string, std::string> m_pendingAction;
@@ -173,6 +174,7 @@ namespace etal {
     std::optional<AppEntry> m_detailsEntry;
     // The last job that touched the app on the details page, so a failure stays readable.
     std::optional<std::uint64_t> m_detailsJob;
+    std::unique_ptr<InstallationWatch> m_watch;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
   };
 } // namespace etal

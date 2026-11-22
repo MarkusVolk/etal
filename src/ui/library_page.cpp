@@ -365,6 +365,7 @@ void etal::LibraryPage::rebuildInstalled(Renderer& renderer) {
 void etal::LibraryPage::setLeftovers(std::vector<LeftoverData> leftovers) {
   m_leftovers = std::move(leftovers);
   m_confirmDelete.clear();
+  std::erase_if(m_deleting, [this](const std::string& id) { return std::ranges::find(m_leftovers, id, &LeftoverData::id) == m_leftovers.end(); });
   m_leftoversStale = true;
 }
 
@@ -387,6 +388,7 @@ void etal::LibraryPage::rebuildLeftovers() {
   for (const LeftoverData& leftover : m_leftovers) {
     const AppEntry* entry = entryOf(leftover.id, InstallationKind::User);
     const bool confirm = m_confirmDelete == leftover.id;
+    const bool deleting = m_deleting.contains(leftover.id);
     auto names = ui::column({.align = FlexAlign::Stretch, .gap = 2.0F, .flexGrow = 1.0F});
     names->addChild(plain(entry ? entry->name : leftover.id, Style::fontSizeBody, ColorRole::OnSurface));
     names->addChild(plain(
@@ -403,16 +405,19 @@ void etal::LibraryPage::rebuildLeftovers() {
         ui::glyph({.glyph = "folder", .glyphSize = Style::fontSizeTitle, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}),
         std::move(names),
         ui::button({
-            .text = confirm ? "Delete for good" : "Delete",
+            .text = deleting ? "Deleting…" : confirm ? "Delete for good" : "Delete",
+            .enabled = !deleting,
             .variant = confirm ? ButtonVariant::Destructive : ButtonVariant::Outline,
             .onClick = [this, id = leftover.id, confirm] {
               if (confirm) {
+                m_deleting.insert(id);
+                m_confirmDelete.clear();
                 m_callbacks.deleteData(id);
               } else {
                 m_confirmDelete = id;
-                m_leftoversStale = true;
-                m_callbacks.changed();
               }
+              m_leftoversStale = true;
+              m_callbacks.changed();
             },
         })
     ));
