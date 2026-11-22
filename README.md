@@ -35,11 +35,8 @@ libcurl, and for the images librsvg, libwebp and libjxl.
 tells you with a notification. With "Update automatically" switched on in the settings it installs
 them first, except those that ask for new permissions, and removes runtimes nothing needs any
 more. A running Etal is asked to do the same in its queue. The systemd user timer that comes with
-Etal runs this once a day:
-
-```sh
-systemctl --user enable --now etal-update.timer
-```
+Etal runs this once a day, for every user; `systemctl --user mask etal-update.timer` switches it
+off for you.
 
 ## The web
 

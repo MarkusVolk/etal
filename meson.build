@@ -120,4 +120,8 @@ configure_file(
   install_dir: systemd_user_dir,
 )
 install_data('data/systemd/etal-update.timer', install_dir: systemd_user_dir)
+install_symlink('etal-update.timer',
+  pointing_to: '../etal-update.timer',
+  install_dir: systemd_user_dir / 'timers.target.wants',
+)
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/etal')
