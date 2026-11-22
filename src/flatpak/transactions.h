@@ -56,6 +56,9 @@ namespace etal {
     std::string remote;
     InstallationKind installation = InstallationKind::User;
     bool runtime = false;
+    // The ref itself is current; only parts that belong to it, such as codecs or locales, are missing.
+    bool partsOnly = false;
+    // Of the ref itself; 0 when only parts are missing, whose size the remote does not tell here.
     std::uint64_t downloadSize = 0;
     // Permissions the new version asks for that the installed one does not have.
     std::vector<std::string> newPermissions;

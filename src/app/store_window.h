@@ -4,6 +4,7 @@
 #include "catalog/catalog.h"
 #include "catalog/search.h"
 #include "flatpak/installations.h"
+#include "flatpak/transactions.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/controls/scroll_view.h"
@@ -32,6 +33,7 @@ namespace etal {
   class AppGridAdapter;
   class DetailsPage;
   class ImageCache;
+  class LibraryPage;
   class TransactionQueue;
   struct Job;
 
@@ -84,6 +86,10 @@ namespace etal {
     void refreshInstalled();
     void install(const AppEntry& entry);
     void remove(const AppEntry& entry, bool deleteData);
+    void showLibrary();
+    void updateAll();
+    void checkUpdates();
+    void setInstalled(std::vector<InstalledApp> apps);
 
     Services m_services;
     WindowSurface m_surface;
@@ -100,6 +106,8 @@ namespace etal {
     Button* m_freeButton = nullptr;
     Flex* m_browse = nullptr;
     DetailsPage* m_details = nullptr;
+    LibraryPage* m_library = nullptr;
+    Button* m_libraryButton = nullptr;
     Flex* m_header = nullptr;
     VirtualGridView* m_grid = nullptr;
     Flex* m_status = nullptr;
@@ -116,7 +124,13 @@ namespace etal {
     std::string m_problem;
     bool m_resultsStale = true;
     bool m_sidebarStale = true;
-    bool m_detailsShown = false;
+    enum class Page : std::uint8_t { Browse, Details, Library };
+    Page m_page = Page::Browse;
+    // Where Back leads from an app's page.
+    Page m_previousPage = Page::Browse;
+    std::vector<InstalledApp> m_installedApps;
+    std::vector<UpdateItem> m_updates;
+    bool m_checkingUpdates = false;
     std::string m_detailsName;
     std::optional<AppEntry> m_detailsEntry;
     // The last job that touched the app on the details page, so a failure stays readable.

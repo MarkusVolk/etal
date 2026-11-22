@@ -14,6 +14,7 @@ app_sources = files(
   'platform/launch_activation.cpp',
   'ui/app_tile.cpp',
   'ui/details_page.cpp',
+  'ui/library_page.cpp',
   'ui/palette_file.cpp',
 )
 

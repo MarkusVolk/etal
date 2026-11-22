@@ -10,6 +10,7 @@
 #include "render/render_context.h"
 #include "ui/app_tile.h"
 #include "ui/details_page.h"
+#include "ui/library_page.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/input.h"
@@ -155,13 +156,52 @@ void etal::StoreWindow::loaded(Loaded result) {
     m_catalog = Catalog();
     m_problem = result.catalog.error();
   }
-  m_installed.clear();
-  for (const auto& app : result.installed) {
-    m_installed.insert(installedKey(app.installation, app.id));
+  if (m_library) {
+    m_library->setCatalog(&m_catalog);
   }
+  setInstalled(std::move(result.installed));
   kLog.info("{} apps, {} installed", m_catalog.entries().size(), m_installed.size());
   m_resultsStale = true;
+  checkUpdates();
   requestUpdate();
+}
+
+void etal::StoreWindow::setInstalled(std::vector<InstalledApp> apps) {
+  m_installedApps = std::move(apps);
+  m_installed.clear();
+  for (const auto& app : m_installedApps) {
+    m_installed.insert(installedKey(app.installation, app.id));
+  }
+  if (m_library) {
+    m_library->setInstalled(m_installedApps);
+  }
+}
+
+void etal::StoreWindow::checkUpdates() {
+  if (m_checkingUpdates) {
+    return;
+  }
+  m_checkingUpdates = true;
+  if (m_library) {
+    m_library->setUpdates(m_updates, true);
+  }
+  std::weak_ptr<int> alive = m_alive;
+  runInThread<UpdateScan>([] { return listUpdates(); }, [this, alive](UpdateScan scan) {
+    if (alive.expired()) {
+      return;
+    }
+    for (const auto& problem : scan.problems) {
+      kLog.warn("updates: {}", problem);
+    }
+    m_checkingUpdates = false;
+    m_updates = std::move(scan.items);
+    kLog.info("{} updates", m_updates.size());
+    if (m_library) {
+      m_library->setUpdates(m_updates, false);
+    }
+    m_sidebarStale = true;
+    requestUpdate();
+  });
 }
 
 void etal::StoreWindow::rebuildResults() {
@@ -180,7 +220,7 @@ void etal::StoreWindow::rebuildResults() {
 
 void etal::StoreWindow::selectCategory(std::string category) {
   m_category = std::move(category);
-  m_detailsShown = false;
+  m_page = Page::Browse;
   if (!m_query.empty()) {
     m_query.clear();
     if (m_search) {
@@ -197,7 +237,7 @@ void etal::StoreWindow::setQuery(std::string query) {
     return;
   }
   m_query = std::move(query);
-  m_detailsShown = false;
+  m_page = Page::Browse;
   m_resultsStale = true;
   m_sidebarStale = true;
   requestUpdate();
@@ -238,15 +278,21 @@ bool etal::StoreWindow::action(const std::string& name, const std::string& param
     showDetails(*found.front());
   } else if (name == "back") {
     showBrowse();
-  } else if (name == "install" && m_detailsShown && m_detailsEntry && !isInstalled(*m_detailsEntry)) {
+  } else if (name == "installed") {
+    showLibrary();
+  } else if (name == "check-updates") {
+    checkUpdates();
+  } else if (name == "update-all") {
+    updateAll();
+  } else if (name == "install" && m_page == Page::Details && m_detailsEntry && !isInstalled(*m_detailsEntry)) {
     install(*m_detailsEntry);
-  } else if (name == "remove" && m_detailsShown && m_detailsEntry && isInstalled(*m_detailsEntry)) {
+  } else if (name == "remove" && m_page == Page::Details && m_detailsEntry && isInstalled(*m_detailsEntry)) {
     remove(*m_detailsEntry, parameter == "delete-data");
   } else if (name == "cancel" && m_detailsJob) {
     m_services.queue.cancel(*m_detailsJob);
-  } else if (name == "scroll" && m_detailsShown) {
+  } else if (name == "scroll" && m_page == Page::Details) {
     m_details->scrollPage(parameter == "up" ? -1 : parameter == "top" ? 0 : 1);
-  } else if (name == "screenshot" && m_detailsShown) {
+  } else if (name == "screenshot" && m_page == Page::Details) {
     m_details->stepScreenshot(parameter == "previous" ? -1 : 1);
   } else {
     return false;
@@ -269,7 +315,10 @@ void etal::StoreWindow::showDetails(const AppEntry& entry) {
   }
   m_details->show(entry, {.installed = isInstalled(entry), .job = m_detailsJob ? std::optional<Job>(*m_services.queue.pendingFor(entry.installation, entry.ref)) : std::nullopt});
   m_detailsName = entry.name;
-  m_detailsShown = true;
+  if (m_page != Page::Details) {
+    m_previousPage = m_page;
+  }
+  m_page = Page::Details;
   std::weak_ptr<int> alive = m_alive;
   const std::string ref = entry.ref;
   runInThread<std::expected<RefInfo, std::string>>(
@@ -313,6 +362,26 @@ void etal::StoreWindow::remove(const AppEntry& entry, bool deleteData) {
   syncDetailsState();
 }
 
+void etal::StoreWindow::updateAll() {
+  // One transaction per installation: the system one asks for a password once.
+  for (const auto kind : {InstallationKind::User, InstallationKind::System}) {
+    JobRequest request;
+    request.kind = JobKind::Update;
+    request.installation = kind;
+    for (const auto& item : m_updates) {
+      if (item.installation == kind) {
+        request.refs.push_back(item.ref);
+      }
+    }
+    if (request.refs.empty()) {
+      continue;
+    }
+    request.title = std::format("{} ({})", request.refs.size() == 1 ? "1 update" : std::format("{} updates", request.refs.size()),
+                                kind == InstallationKind::User ? "user" : "system");
+    m_services.queue.enqueue(std::move(request));
+  }
+}
+
 void etal::StoreWindow::syncDetailsState() {
   if (!m_details || !m_detailsEntry) {
     return;
@@ -336,8 +405,14 @@ void etal::StoreWindow::jobChanged(const Job& job, bool finished) {
     refreshInstalled();
     if (job.request.kind == JobKind::AddRemote && job.state == JobState::Done) {
       load();
+    } else {
+      checkUpdates();
     }
   }
+  if (m_library) {
+    m_library->setJobs(m_services.queue.jobs());
+  }
+  m_sidebarStale = true;
   syncDetailsState();
   requestUpdate();
 }
@@ -348,10 +423,7 @@ void etal::StoreWindow::refreshInstalled() {
     if (alive.expired()) {
       return;
     }
-    m_installed.clear();
-    for (const auto& app : apps) {
-      m_installed.insert(installedKey(app.installation, app.id));
-    }
+    setInstalled(std::move(apps));
     if (m_grid) {
       m_grid->notifyDataChanged();
     }
@@ -361,7 +433,14 @@ void etal::StoreWindow::refreshInstalled() {
 }
 
 void etal::StoreWindow::showBrowse() {
-  m_detailsShown = false;
+  m_page = m_page == Page::Details ? m_previousPage : Page::Browse;
+  m_sidebarStale = true;
+  requestUpdate();
+}
+
+void etal::StoreWindow::showLibrary() {
+  m_page = Page::Library;
+  m_sidebarStale = true;
   requestUpdate();
 }
 
@@ -401,6 +480,15 @@ void etal::StoreWindow::build() {
     m_categoryButtons.emplace_back(std::move(id), button);
     return node;
   };
+  sidebar->addChild(ui::button({
+      .out = &m_libraryButton,
+      .text = "Installed",
+      .glyph = "device-desktop",
+      .contentAlign = ButtonContentAlign::Start,
+      .variant = ButtonVariant::Ghost,
+      .onClick = [this] { showLibrary(); },
+  }));
+  sidebar->addChild(ui::separator({.spacing = Style::spaceSm}));
   sidebar->addChild(categoryButton("", "All Apps", "apps"));
   for (const auto& category : mainCategories()) {
     sidebar->addChild(categoryButton(std::string(category.id), category.title, category.glyph));
@@ -520,15 +608,60 @@ void etal::StoreWindow::build() {
   details->setParticipatesInLayout(false);
   m_details = details.get();
   content->addChild(std::move(details));
+  auto library = std::make_unique<LibraryPage>(LibraryPage::Callbacks{
+      .open =
+          [this](const InstalledApp& app) {
+            for (const AppEntry* entry : m_catalog.find(app.id)) {
+              if (entry->installation == app.installation) {
+                showDetails(*entry);
+                return;
+              }
+            }
+          },
+      .updateAll = [this] { updateAll(); },
+      .update =
+          [this](const UpdateItem& item) {
+            JobRequest request;
+            request.kind = JobKind::Update;
+            request.installation = item.installation;
+            request.refs = {item.ref};
+            request.appId = item.id;
+            const auto found = m_catalog.find(item.id);
+            request.title = found.empty() ? item.id : found.front()->name;
+            m_services.queue.enqueue(std::move(request));
+          },
+      .checkUpdates = [this] { checkUpdates(); },
+      .cancel = [this](std::uint64_t job) { m_services.queue.cancel(job); },
+      .clearFinished =
+          [this] {
+            m_services.queue.clearFinished();
+            m_library->setJobs(m_services.queue.jobs());
+            requestUpdate();
+          },
+      .changed = [this] { requestUpdate(); },
+  });
+  library->setFlexGrow(1.0F);
+  library->setVisible(false);
+  library->setParticipatesInLayout(false);
+  m_library = library.get();
+  m_library->setCatalog(&m_catalog);
+  m_library->setInstalled(m_installedApps);
+  m_library->setUpdates(m_updates, m_checkingUpdates);
+  m_library->setJobs(m_services.queue.jobs());
+  content->addChild(std::move(library));
   m_root->addChild(std::move(content));
 }
 
 void etal::StoreWindow::syncSidebar() {
   for (auto& [id, button] : m_categoryButtons) {
-    const bool selected = m_query.empty() && id == m_category;
+    const bool selected = m_page != Page::Library && m_query.empty() && id == m_category;
     button->setVariant(selected ? ButtonVariant::Secondary : ButtonVariant::Ghost);
     button->setSelected(selected);
   }
+  m_libraryButton->setVariant(m_page == Page::Library ? ButtonVariant::Secondary : ButtonVariant::Ghost);
+  m_libraryButton->setSelected(m_page == Page::Library);
+  const std::size_t waiting = m_updates.size() + m_services.queue.pendingCount();
+  m_libraryButton->setBadge(waiting > 0 ? std::to_string(waiting) : std::string());
   m_verifiedButton->setVariant(m_settings.onlyVerified ? ButtonVariant::Secondary : ButtonVariant::Outline);
   m_freeButton->setVariant(m_settings.onlyFree ? ButtonVariant::Secondary : ButtonVariant::Outline);
   m_sidebarStale = false;
@@ -579,13 +712,18 @@ void etal::StoreWindow::prepare() {
     m_statusText->setText(!m_problem.empty() ? m_problem : !m_query.empty() ? "No app matches the search." : "No apps here.");
   }
 
-  m_browse->setVisible(!m_detailsShown);
-  m_browse->setParticipatesInLayout(!m_detailsShown);
-  m_details->setVisible(m_detailsShown);
-  m_details->setParticipatesInLayout(m_detailsShown);
-  if (m_detailsShown) {
+  m_browse->setVisible(m_page == Page::Browse);
+  m_browse->setParticipatesInLayout(m_page == Page::Browse);
+  m_details->setVisible(m_page == Page::Details);
+  m_details->setParticipatesInLayout(m_page == Page::Details);
+  m_library->setVisible(m_page == Page::Library);
+  m_library->setParticipatesInLayout(m_page == Page::Library);
+  if (m_page == Page::Details) {
     m_details->sync(renderer);
     m_surface.setTitle(std::format("{} — Etal", m_detailsName));
+  } else if (m_page == Page::Library) {
+    m_library->sync(renderer);
+    m_surface.setTitle("Installed — Etal");
   }
 
   const auto width = static_cast<float>(m_surface.width()), height = static_cast<float>(m_surface.height());
@@ -602,11 +740,11 @@ void etal::StoreWindow::keyboard(const KeyboardEvent& event) {
       requestUpdate();
       return;
     }
-    if (m_detailsShown && event.modifiers == 0 && sym == XKB_KEY_Escape) {
+    if (m_page == Page::Details && event.modifiers == 0 && sym == XKB_KEY_Escape) {
       showBrowse();
       return;
     }
-    if (m_detailsShown && event.modifiers == KeyMod::Alt && sym == XKB_KEY_Left) {
+    if (m_page == Page::Details && event.modifiers == KeyMod::Alt && sym == XKB_KEY_Left) {
       showBrowse();
       return;
     }

@@ -351,17 +351,20 @@ etal::UpdateScan etal::listUpdates() {
           .remote = str(flatpak_installed_ref_get_origin(installed)),
           .installation = kind,
           .runtime = flatpak_ref_get_kind(ref) == FLATPAK_REF_KIND_RUNTIME,
+          .partsOnly = false,
           .downloadSize = 0,
           .newPermissions = {},
       };
       g_free(formatted);
+      const char* latest = flatpak_installed_ref_get_latest_commit(installed);
+      item.partsOnly = !latest || str(latest) == str(flatpak_ref_get_commit(ref));
       FlatpakRemoteRef* remote = flatpak_installation_fetch_remote_ref_sync(
           installation, item.remote.c_str(), flatpak_ref_get_kind(ref), flatpak_ref_get_name(ref), flatpak_ref_get_arch(ref),
           flatpak_ref_get_branch(ref), nullptr, nullptr
       );
       if (remote) {
-        item.downloadSize = flatpak_remote_ref_get_download_size(remote);
-        if (!item.runtime) {
+        item.downloadSize = item.partsOnly ? 0 : flatpak_remote_ref_get_download_size(remote);
+        if (!item.runtime && !item.partsOnly) {
           GBytes* newBytes = flatpak_remote_ref_get_metadata(remote);
           const std::string updated = newBytes ? std::string(static_cast<const char*>(g_bytes_get_data(newBytes, nullptr)), g_bytes_get_size(newBytes)) : std::string();
           const std::string current = bytesToString(flatpak_installed_ref_load_metadata(installed, nullptr, nullptr));
