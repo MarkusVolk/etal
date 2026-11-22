@@ -362,6 +362,25 @@ void etal::StoreWindow::remove(const AppEntry& entry, bool deleteData) {
   syncDetailsState();
 }
 
+void etal::StoreWindow::openFile(const std::filesystem::path& file) {
+  const std::string extension = file.extension().string();
+  JobRequest request;
+  request.installation = m_settings.installation;
+  request.file = file;
+  request.title = file.filename().string();
+  if (extension == ".flatpakrepo") {
+    request.kind = JobKind::AddRemote;
+    request.remote = file.stem().string();
+  } else if (extension == ".flatpakref" || extension == ".flatpak") {
+    request.kind = JobKind::InstallFile;
+  } else {
+    kLog.warn("{}: not a .flatpakref, .flatpakrepo or .flatpak file", file.string());
+    return;
+  }
+  m_services.queue.enqueue(std::move(request));
+  showLibrary();
+}
+
 void etal::StoreWindow::updateAll() {
   // One transaction per installation: the system one asks for a password once.
   for (const auto kind : {InstallationKind::User, InstallationKind::System}) {

@@ -28,6 +28,11 @@ libcurl, and for the images librsvg, libwebp and libjxl.
 | Escape, Alt+Left | Back from an app's page |
 | Ctrl+Q, Ctrl+W | Quit |
 
+## Files
+
+`etal file.flatpakref` and `etal app.flatpak` install what the file names, `etal name.flatpakrepo`
+adds the remote under the file's name. A running Etal takes the file over.
+
 ## Installations
 
 Etal shows the apps of every enabled remote of your user installation and of the system one.

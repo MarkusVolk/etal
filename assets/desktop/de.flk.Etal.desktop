@@ -7,5 +7,6 @@ Exec=etal %F
 Icon=de.flk.Etal
 Terminal=false
 Categories=System;PackageManager;
+MimeType=application/vnd.flatpak.ref;application/vnd.flatpak.repo;application/vnd.flatpak;
 Keywords=apps;software;store;flatpak;flathub;install;update;
 StartupWMClass=de.flk.Etal

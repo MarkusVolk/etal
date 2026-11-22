@@ -159,9 +159,12 @@ int etal::runApplication(const std::vector<std::string>& files) {
            .images = images,
            .queue = queue}
       );
+      for (const auto& path : paths) {
+        window.openFile(path);
+      }
       instance.setHandler([&window, &desktop](const InstanceRequest& request) {
-        if (!request.files.empty()) {
-          std::println(stderr, "etal: opening files is not supported yet");
+        for (const auto& file : request.files) {
+          window.openFile(file);
         }
         if (!request.action.empty() && !window.action(request.action, request.parameter)) {
           std::println(stderr, "etal: no action named {}", request.action);

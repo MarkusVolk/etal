@@ -275,11 +275,6 @@ etal::runJob(const JobRequest& request, const ProgressFn& progress, GCancellable
     g_object_unref(transaction);
     return prepared;
   }
-  if (flatpak_transaction_is_empty(transaction)) {
-    g_object_unref(transaction);
-    progress({1.0, "Nothing to do"});
-    return {};
-  }
   progress({0.0, "Preparing…"});
   const bool ok = flatpak_transaction_run(transaction, cancellable, &error);
   g_object_unref(transaction);

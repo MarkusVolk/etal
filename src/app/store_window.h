@@ -9,6 +9,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "ui/controls/scroll_view.h"
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -57,6 +58,8 @@ namespace etal {
 
     // Runs a named action ("search", "category", "reload", ...); false when there is none of that name.
     bool action(const std::string& name, const std::string& parameter);
+    // Queues a .flatpakref or .flatpak bundle for installing, or adds the remote of a .flatpakrepo.
+    void openFile(const std::filesystem::path& file);
     bool running() const { return m_surface.isRunning(); }
     void close() { m_surface.close(); }
     wl_surface* surface() const { return m_surface.wlSurface(); }
